@@ -31,7 +31,7 @@ struct ChromaIOSApp: App {
     }
 
     private static func configureGlobalTypography() {
-#if canImport(UIKit)
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
         let navTitle = UIFont(name: "Oswald-SemiBold", size: 20) ?? UIFont.systemFont(ofSize: 20, weight: .semibold)
         let navLargeTitle = UIFont(name: "Oswald-Bold", size: 34) ?? UIFont.systemFont(ofSize: 34, weight: .bold)
         let navAction = UIFont(name: "Oswald-Medium", size: 17) ?? UIFont.systemFont(ofSize: 17, weight: .medium)

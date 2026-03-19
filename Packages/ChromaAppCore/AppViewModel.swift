@@ -105,6 +105,21 @@ public final class AppViewModel: ObservableObject {
         router.present(.settingsDiagnostics)
     }
 
+    public func presentTunnelVariantPicker() {
+        registerPerformanceInteraction()
+        router.present(.tunnelVariantPicker)
+    }
+
+    public func presentFractalPalettePicker() {
+        registerPerformanceInteraction()
+        router.present(.fractalPalettePicker)
+    }
+
+    public func presentRiemannPalettePicker() {
+        registerPerformanceInteraction()
+        router.present(.riemannPalettePicker)
+    }
+
     private func scheduleChromeHide() {
         cancelScheduledHide()
         let delay = chromeHideDelayNanoseconds

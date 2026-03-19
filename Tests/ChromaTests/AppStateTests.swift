@@ -11,8 +11,22 @@ final class AppStateTests: XCTestCase {
         router.present(.feedbackSetup)
         XCTAssertEqual(router.presentedSheet, .feedbackSetup)
 
+        router.present(.riemannPalettePicker)
+        XCTAssertEqual(router.presentedSheet, .riemannPalettePicker)
+
         router.dismiss()
         XCTAssertNil(router.presentedSheet)
+    }
+
+    func testSheetDetentPolicyMatchesDestinationContract() {
+        XCTAssertEqual(appSheetDetentStyle(for: .modePicker), .mediumAndLarge)
+        XCTAssertEqual(appSheetDetentStyle(for: .presetBrowser), .mediumAndLarge)
+        XCTAssertEqual(appSheetDetentStyle(for: .settingsDiagnostics), .mediumAndLarge)
+        XCTAssertEqual(appSheetDetentStyle(for: .feedbackSetup), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .recorderExport), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .tunnelVariantPicker), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .fractalPalettePicker), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .riemannPalettePicker), .mediumOnly)
     }
 
     func testAppViewModelTogglesPerformanceMode() {
@@ -41,6 +55,20 @@ final class AppStateTests: XCTestCase {
         appViewModel.revealPerformanceChrome()
         XCTAssertTrue(appViewModel.isChromeVisible)
         XCTAssertFalse(appViewModel.isRevealControlVisible)
+    }
+
+    func testAppViewModelPresentsModeStylePickers() {
+        let router = AppRouter()
+        let appViewModel = AppViewModel(router: router)
+
+        appViewModel.presentTunnelVariantPicker()
+        XCTAssertEqual(router.presentedSheet, .tunnelVariantPicker)
+
+        appViewModel.presentFractalPalettePicker()
+        XCTAssertEqual(router.presentedSheet, .fractalPalettePicker)
+
+        appViewModel.presentRiemannPalettePicker()
+        XCTAssertEqual(router.presentedSheet, .riemannPalettePicker)
     }
 
     func testSessionTransitionsModeAndPreset() {
@@ -79,6 +107,128 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(sessionViewModel.showsColorFeedbackAction)
         sessionViewModel.selectMode(.prismField)
         XCTAssertFalse(sessionViewModel.showsColorFeedbackAction)
+    }
+
+    func testTunnelVariantActionAvailableOnlyInTunnelCels() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        XCTAssertFalse(sessionViewModel.showsTunnelVariantAction)
+        sessionViewModel.selectMode(.tunnelCels)
+        XCTAssertTrue(sessionViewModel.showsTunnelVariantAction)
+    }
+
+    func testCyclingTunnelVariantUpdatesModeScopedParameter() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.tunnelCels)
+        sessionViewModel.cycleTunnelVariant()
+        sessionViewModel.cycleTunnelVariant()
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.tunnelCels.variant",
+            scope: .mode(.tunnelCels)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 2, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.tunnelVariantLabel, "Glyph Slabs")
+    }
+
+    func testSettingTunnelVariantWritesScopedValue() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.tunnelCels)
+        sessionViewModel.setTunnelVariant(index: 1)
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.tunnelCels.variant",
+            scope: .mode(.tunnelCels)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 1, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.tunnelVariantLabel, "Prism Shards")
+    }
+
+    func testFractalPaletteActionAvailableOnlyInFractalCaustics() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        XCTAssertFalse(sessionViewModel.showsFractalPaletteAction)
+        sessionViewModel.selectMode(.fractalCaustics)
+        XCTAssertTrue(sessionViewModel.showsFractalPaletteAction)
+    }
+
+    func testCyclingFractalPaletteUpdatesModeScopedParameter() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.fractalCaustics)
+        sessionViewModel.cycleFractalPaletteVariant()
+        sessionViewModel.cycleFractalPaletteVariant()
+        sessionViewModel.cycleFractalPaletteVariant()
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.fractalCaustics.paletteVariant",
+            scope: .mode(.fractalCaustics)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 3, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.fractalPaletteLabel, "Neon")
+    }
+
+    func testSettingFractalPaletteWritesScopedValue() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.fractalCaustics)
+        sessionViewModel.setFractalPaletteVariant(index: 6)
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.fractalCaustics.paletteVariant",
+            scope: .mode(.fractalCaustics)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 6, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.fractalPaletteLabel, "Mono")
+    }
+
+    func testRiemannPaletteActionAvailableOnlyInRiemannCorridor() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        XCTAssertFalse(sessionViewModel.showsRiemannPaletteAction)
+        sessionViewModel.selectMode(.riemannCorridor)
+        XCTAssertTrue(sessionViewModel.showsRiemannPaletteAction)
+    }
+
+    func testCyclingRiemannPaletteUpdatesModeScopedParameter() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.riemannCorridor)
+        sessionViewModel.cycleRiemannPaletteVariant()
+        sessionViewModel.cycleRiemannPaletteVariant()
+        sessionViewModel.cycleRiemannPaletteVariant()
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.riemannCorridor.paletteVariant",
+            scope: .mode(.riemannCorridor)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 3, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.riemannPaletteLabel, "Neon")
+    }
+
+    func testSettingRiemannPaletteWritesScopedValue() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.riemannCorridor)
+        sessionViewModel.setRiemannPaletteVariant(index: 5)
+
+        let current = sessionViewModel.parameterStore.value(
+            for: "mode.riemannCorridor.paletteVariant",
+            scope: .mode(.riemannCorridor)
+        )?.scalarValue ?? -1
+        XCTAssertEqual(current, 5, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.riemannPaletteLabel, "Glass")
     }
 
     func testStartingFeedbackEnablesFlagAndLeavingColorShiftDisablesIt() async {

@@ -20,6 +20,18 @@ public enum ParameterCatalog {
             summary: "Attack-spawned cel forms in an infinite stage tunnel.",
             supportsMorphing: true
         ),
+        VisualModeDescriptor(
+            id: .fractalCaustics,
+            name: VisualModeID.fractalCaustics.displayName,
+            summary: "Orbit-trap caustics with flow plus attack pulses.",
+            supportsMorphing: true
+        ),
+        VisualModeDescriptor(
+            id: .riemannCorridor,
+            name: VisualModeID.riemannCorridor.displayName,
+            summary: "Mandelbrot flight map with contour layers and attack traces.",
+            supportsMorphing: true
+        ),
     ]
 
     public static let descriptors: [ParameterDescriptor] = [
@@ -144,6 +156,102 @@ public enum ParameterCatalog {
             maximumValue: 2.0
         ),
         ParameterDescriptor(
+            id: "mode.fractalCaustics.detail",
+            title: "Detail",
+            summary: "Julia orbit-trap detail and field complexity.",
+            group: .geometry,
+            tier: .basic,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.60),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.fractalCaustics.flowRate",
+            title: "Flow Rate",
+            summary: "Continuous fractal flow speed and breathing rate.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.56),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.fractalCaustics.attackBloom",
+            title: "Attack Bloom",
+            summary: "Attack pulse intensity and release behavior.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.62),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.fractalCaustics.paletteVariant",
+            title: "Palette",
+            summary: "Curated gradient bank selection for fractal mapping.",
+            group: .color,
+            tier: .advanced,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 7.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.detail",
+            title: "Detail",
+            summary: "Mandelbrot iteration/detail budget and boundary complexity.",
+            group: .geometry,
+            tier: .basic,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.60),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.flowRate",
+            title: "Flow Rate",
+            summary: "Audio-driven navigation and warp speed through the fractal field.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.56),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.zeroBloom",
+            title: "Zero Bloom",
+            summary: "Attack trace intensity and release behavior.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.62),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.paletteVariant",
+            title: "Palette",
+            summary: "Curated gradient bank selection for Mandelbrot domain coloring.",
+            group: .color,
+            tier: .advanced,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 7.0
+        ),
+        ParameterDescriptor(
             id: "output.blackFloor",
             title: "Black Floor",
             summary: "Output floor to preserve darkness between events.",
@@ -207,6 +315,24 @@ public enum ParameterCatalog {
                 "mode.tunnelCels.releaseTail",
                 "output.blackFloor",
             ]
+        case .fractalCaustics:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.fractalCaustics.detail",
+                "mode.fractalCaustics.flowRate",
+                "mode.fractalCaustics.attackBloom",
+                "output.blackFloor",
+            ]
+        case .riemannCorridor:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.riemannCorridor.detail",
+                "mode.riemannCorridor.flowRate",
+                "mode.riemannCorridor.zeroBloom",
+                "output.blackFloor",
+            ]
         }
     }
 
@@ -233,6 +359,24 @@ public enum ParameterCatalog {
                 "mode.tunnelCels.shapeScale",
                 "mode.tunnelCels.depthSpeed",
                 "mode.tunnelCels.releaseTail",
+                "output.blackFloor",
+            ]
+        case .fractalCaustics:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.fractalCaustics.detail",
+                "mode.fractalCaustics.flowRate",
+                "mode.fractalCaustics.attackBloom",
+                "output.blackFloor",
+            ]
+        case .riemannCorridor:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.riemannCorridor.detail",
+                "mode.riemannCorridor.flowRate",
+                "mode.riemannCorridor.zeroBloom",
                 "output.blackFloor",
             ]
         }

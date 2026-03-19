@@ -247,7 +247,7 @@ public final class LiveCameraFeedbackService: NSObject, CameraFeedbackService {
     }
 
     private static func currentAuthorizationStatus() -> CameraFeedbackAuthorizationStatus {
-        #if os(iOS) || targetEnvironment(macCatalyst)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             return .authorized

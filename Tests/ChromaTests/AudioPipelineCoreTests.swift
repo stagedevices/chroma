@@ -107,6 +107,120 @@ final class AudioPipelineCoreTests: XCTestCase {
         XCTAssertEqual(mapped.controls.scale, 0.57, accuracy: 0.0001)
     }
 
+    func testRendererSurfaceStateMapperRoutesTunnelCelsControls() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        store.setValue(.scalar(0.67), for: "mode.tunnelCels.shapeScale", scope: .mode(.tunnelCels))
+        store.setValue(.scalar(0.41), for: "mode.tunnelCels.depthSpeed", scope: .mode(.tunnelCels))
+        store.setValue(.scalar(0.72), for: "mode.tunnelCels.releaseTail", scope: .mode(.tunnelCels))
+        store.setValue(.scalar(1.8), for: "mode.tunnelCels.variant", scope: .mode(.tunnelCels))
+
+        let mapper = RendererSurfaceStateMapper()
+        var session = ChromaSession.initial()
+        session.activeModeID = .tunnelCels
+
+        let featureFrame = AudioFeatureFrame(
+            timestamp: .now,
+            amplitude: 0.52,
+            lowBandEnergy: 0.68,
+            midBandEnergy: 0.47,
+            highBandEnergy: 0.21,
+            transientStrength: 0.70,
+            isAttack: true,
+            attackStrength: 0.64,
+            attackID: 101,
+            attackDbOverFloor: 9.4
+        )
+        let mapped = mapper.map(session: session, parameterStore: store, latestFeatureFrame: featureFrame)
+
+        XCTAssertEqual(mapped.activeModeID, .tunnelCels)
+        XCTAssertEqual(mapped.controls.tunnelShapeScale, 0.67, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.tunnelDepthSpeed, 0.41, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.tunnelReleaseTail, 0.72, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.tunnelVariant, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.scale, 0.67, accuracy: 0.0001)
+        XCTAssertGreaterThan(mapped.controls.motion, 0.41)
+    }
+
+    func testRendererSurfaceStateMapperRoutesFractalCausticsControls() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        store.setValue(.scalar(0.73), for: "mode.fractalCaustics.detail", scope: .mode(.fractalCaustics))
+        store.setValue(.scalar(0.44), for: "mode.fractalCaustics.flowRate", scope: .mode(.fractalCaustics))
+        store.setValue(.scalar(0.81), for: "mode.fractalCaustics.attackBloom", scope: .mode(.fractalCaustics))
+        store.setValue(.scalar(6.6), for: "mode.fractalCaustics.paletteVariant", scope: .mode(.fractalCaustics))
+
+        let mapper = RendererSurfaceStateMapper()
+        var session = ChromaSession.initial()
+        session.activeModeID = .fractalCaustics
+
+        let featureFrame = AudioFeatureFrame(
+            timestamp: .now,
+            amplitude: 0.57,
+            lowBandEnergy: 0.29,
+            midBandEnergy: 0.63,
+            highBandEnergy: 0.72,
+            transientStrength: 0.66,
+            pitchHz: 261.63,
+            pitchConfidence: 0.84,
+            stablePitchClass: 0,
+            stablePitchCents: 4.2,
+            isAttack: true,
+            attackStrength: 0.79,
+            attackID: 301,
+            attackDbOverFloor: 10.8
+        )
+        let mapped = mapper.map(session: session, parameterStore: store, latestFeatureFrame: featureFrame)
+
+        XCTAssertEqual(mapped.activeModeID, .fractalCaustics)
+        XCTAssertEqual(mapped.controls.fractalDetail, 0.73, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.fractalFlowRate, 0.44, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.fractalAttackBloom, 0.81, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.fractalPaletteVariant, 7.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.scale, 0.73, accuracy: 0.0001)
+        XCTAssertGreaterThan(mapped.controls.motion, 0.44)
+        XCTAssertEqual(mapped.controls.pitchConfidence, 0.84, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.stablePitchClass, 0)
+    }
+
+    func testRendererSurfaceStateMapperRoutesRiemannCorridorControls() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        store.setValue(.scalar(0.69), for: "mode.riemannCorridor.detail", scope: .mode(.riemannCorridor))
+        store.setValue(.scalar(0.42), for: "mode.riemannCorridor.flowRate", scope: .mode(.riemannCorridor))
+        store.setValue(.scalar(0.77), for: "mode.riemannCorridor.zeroBloom", scope: .mode(.riemannCorridor))
+        store.setValue(.scalar(5.7), for: "mode.riemannCorridor.paletteVariant", scope: .mode(.riemannCorridor))
+
+        let mapper = RendererSurfaceStateMapper()
+        var session = ChromaSession.initial()
+        session.activeModeID = .riemannCorridor
+
+        let featureFrame = AudioFeatureFrame(
+            timestamp: .now,
+            amplitude: 0.53,
+            lowBandEnergy: 0.64,
+            midBandEnergy: 0.41,
+            highBandEnergy: 0.33,
+            transientStrength: 0.62,
+            pitchHz: 293.66,
+            pitchConfidence: 0.79,
+            stablePitchClass: 2,
+            stablePitchCents: -3.5,
+            isAttack: true,
+            attackStrength: 0.74,
+            attackID: 411,
+            attackDbOverFloor: 10.1
+        )
+        let mapped = mapper.map(session: session, parameterStore: store, latestFeatureFrame: featureFrame)
+
+        XCTAssertEqual(mapped.activeModeID, .riemannCorridor)
+        XCTAssertEqual(mapped.controls.riemannDetail, 0.69, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.riemannFlowRate, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.riemannZeroBloom, 0.77, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.riemannPaletteVariant, 6.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.scale, 0.69, accuracy: 0.0001)
+        XCTAssertGreaterThan(mapped.controls.motion, 0.42)
+        XCTAssertEqual(mapped.controls.pitchConfidence, 0.79, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.stablePitchClass, 2)
+    }
+
     func testAudioStatusFormatterProducesLiveSummary() {
         let formatter = AudioStatusFormatter()
         let status = formatter.liveStatus(

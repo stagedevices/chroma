@@ -141,11 +141,21 @@ public final class LiveAudioInputService: AudioInputService {
         }
         guard !isCapturing else { return }
 
-        try configureTapIfNeeded()
-        try configureAudioSessionIfNeeded()
-        refreshInputSources()
-        try engine.start()
-        isCapturing = true
+        do {
+            try configureTapIfNeeded()
+            try configureAudioSessionIfNeeded()
+            refreshInputSources()
+            try engine.start()
+            isCapturing = true
+        } catch {
+            if isTapInstalled {
+                engine.inputNode.removeTap(onBus: 0)
+                isTapInstalled = false
+            }
+            engine.stop()
+            isCapturing = false
+            throw error
+        }
     }
 
     public func stopCapture() {
@@ -314,9 +324,6 @@ public final class LiveAudioInputService: AudioInputService {
 
     private static func currentAuthorizationStatus() -> AudioInputAuthorizationStatus {
         #if os(iOS)
-        #if targetEnvironment(macCatalyst)
-        return .authorized
-        #else
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
             return .authorized
@@ -327,7 +334,6 @@ public final class LiveAudioInputService: AudioInputService {
         @unknown default:
             return .notDetermined
         }
-        #endif
         #else
         return .authorized
         #endif
@@ -335,15 +341,11 @@ public final class LiveAudioInputService: AudioInputService {
 
     private static func requestRecordPermissionIfNeeded() async -> Bool {
         #if os(iOS)
-        #if targetEnvironment(macCatalyst)
-        return true
-        #else
         return await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }
         }
-        #endif
         #else
         return true
         #endif

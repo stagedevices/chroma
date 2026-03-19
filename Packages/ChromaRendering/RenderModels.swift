@@ -26,6 +26,14 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var tunnelDepthSpeed: Double
     public var tunnelReleaseTail: Double
     public var tunnelVariant: Double
+    public var fractalDetail: Double
+    public var fractalFlowRate: Double
+    public var fractalAttackBloom: Double
+    public var fractalPaletteVariant: Double
+    public var riemannDetail: Double
+    public var riemannFlowRate: Double
+    public var riemannZeroBloom: Double
+    public var riemannPaletteVariant: Double
     public var featureAmplitude: Double
     public var lowBandEnergy: Double
     public var midBandEnergy: Double
@@ -58,6 +66,14 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         tunnelDepthSpeed: Double = 0.62,
         tunnelReleaseTail: Double = 0.58,
         tunnelVariant: Double = 0,
+        fractalDetail: Double = 0.60,
+        fractalFlowRate: Double = 0.56,
+        fractalAttackBloom: Double = 0.62,
+        fractalPaletteVariant: Double = 0,
+        riemannDetail: Double = 0.60,
+        riemannFlowRate: Double = 0.56,
+        riemannZeroBloom: Double = 0.62,
+        riemannPaletteVariant: Double = 0,
         featureAmplitude: Double = 0,
         lowBandEnergy: Double = 0,
         midBandEnergy: Double = 0,
@@ -89,6 +105,14 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.tunnelDepthSpeed = tunnelDepthSpeed
         self.tunnelReleaseTail = tunnelReleaseTail
         self.tunnelVariant = tunnelVariant
+        self.fractalDetail = fractalDetail
+        self.fractalFlowRate = fractalFlowRate
+        self.fractalAttackBloom = fractalAttackBloom
+        self.fractalPaletteVariant = fractalPaletteVariant
+        self.riemannDetail = riemannDetail
+        self.riemannFlowRate = riemannFlowRate
+        self.riemannZeroBloom = riemannZeroBloom
+        self.riemannPaletteVariant = riemannPaletteVariant
         self.featureAmplitude = featureAmplitude
         self.lowBandEnergy = lowBandEnergy
         self.midBandEnergy = midBandEnergy
@@ -123,6 +147,14 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             tunnelDepthSpeed: tunnelDepthSpeed.clamped(to: 0 ... 1),
             tunnelReleaseTail: tunnelReleaseTail.clamped(to: 0 ... 1),
             tunnelVariant: tunnelVariant.clamped(to: 0 ... 2),
+            fractalDetail: fractalDetail.clamped(to: 0 ... 1),
+            fractalFlowRate: fractalFlowRate.clamped(to: 0 ... 1),
+            fractalAttackBloom: fractalAttackBloom.clamped(to: 0 ... 1),
+            fractalPaletteVariant: fractalPaletteVariant.clamped(to: 0 ... 7),
+            riemannDetail: riemannDetail.clamped(to: 0 ... 1),
+            riemannFlowRate: riemannFlowRate.clamped(to: 0 ... 1),
+            riemannZeroBloom: riemannZeroBloom.clamped(to: 0 ... 1),
+            riemannPaletteVariant: riemannPaletteVariant.clamped(to: 0 ... 7),
             featureAmplitude: featureAmplitude.clamped(to: 0 ... 1),
             lowBandEnergy: lowBandEnergy.clamped(to: 0 ... 1),
             midBandEnergy: midBandEnergy.clamped(to: 0 ... 1),

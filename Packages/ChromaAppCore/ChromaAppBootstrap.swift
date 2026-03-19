@@ -16,7 +16,12 @@ public struct ChromaAppBootstrap {
             meterPublisher: audioInputService.meterPublisher,
             samplePublisher: audioInputService.samplePublisher
         )
-        let cameraFeedbackService = LiveCameraFeedbackService()
+        let cameraFeedbackService: CameraFeedbackService
+        #if targetEnvironment(macCatalyst)
+        cameraFeedbackService = PlaceholderCameraFeedbackService(authorizationStatus: .unavailable)
+        #else
+        cameraFeedbackService = LiveCameraFeedbackService()
+        #endif
         return makeBootstrap(
             rendererService: MetalRendererService(),
             audioInputService: audioInputService,

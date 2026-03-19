@@ -7,6 +7,9 @@
       "layers" : [
         {
           "blend-mode" : "overlay",
+          "fill" : {
+            "automatic-gradient" : "extended-srgb:0.00000,0.47843,1.00000,1.00000"
+          },
           "image-name" : "box 4.png",
           "name" : "box 4"
         },
@@ -72,11 +75,13 @@
         },
         {
           "blend-mode" : "overlay",
-          "fill" : "automatic",
+          "fill" : {
+            "automatic-gradient" : "extended-srgb:0.00000,0.47843,1.00000,1.00000"
+          },
           "glass" : true,
           "image-name" : "c 2.png",
           "name" : "c 2",
-          "opacity" : 1,
+          "opacity" : 0.39,
           "position" : {
             "scale" : 1.63,
             "translation-in-points" : [
@@ -86,13 +91,12 @@
           }
         },
         {
-          "fill" : {
-            "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
-          },
+          "blend-mode" : "normal",
+          "fill" : "none",
           "glass" : true,
           "image-name" : "c 2.png",
           "name" : "c 2",
-          "opacity" : 0.22,
+          "opacity" : 1,
           "position" : {
             "scale" : 1.66,
             "translation-in-points" : [
@@ -121,7 +125,7 @@
       }
     },
     {
-      "blend-mode" : "screen",
+      "blend-mode" : "plus-darker",
       "blur-material" : 0.87,
       "layers" : [
         {
@@ -130,9 +134,10 @@
             "solid" : "srgb:0.99953,0.98836,0.47266,1.00000"
           },
           "glass" : true,
+          "hidden" : false,
           "image-name" : "c 2.png",
           "name" : "c 2",
-          "opacity" : 0.39,
+          "opacity" : 0.09,
           "position" : {
             "scale" : 1.63,
             "translation-in-points" : [
@@ -145,6 +150,7 @@
           "blend-mode" : "screen",
           "fill" : "automatic",
           "glass" : true,
+          "hidden" : false,
           "image-name" : "c 2.png",
           "name" : "c 2",
           "opacity" : 1,
@@ -157,13 +163,14 @@
           }
         },
         {
+          "blend-mode" : "plus-darker",
           "fill" : {
             "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
           },
           "glass" : true,
           "image-name" : "c 2.png",
           "name" : "c 2",
-          "opacity" : 0.22,
+          "opacity" : 0.27,
           "position" : {
             "scale" : 1.66,
             "translation-in-points" : [

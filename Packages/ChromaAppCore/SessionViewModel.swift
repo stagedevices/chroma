@@ -136,6 +136,14 @@ public final class SessionViewModel: ObservableObject {
         session.activeModeID == .tunnelCels
     }
 
+    public var showsFractalPaletteAction: Bool {
+        session.activeModeID == .fractalCaustics
+    }
+
+    public var showsRiemannPaletteAction: Bool {
+        session.activeModeID == .riemannCorridor
+    }
+
     public var tunnelVariantLabel: String {
         let current = tunnelVariantIndex
         switch current {
@@ -145,6 +153,32 @@ public final class SessionViewModel: ObservableObject {
             return "Prism Shards"
         default:
             return "Glyph Slabs"
+        }
+    }
+
+    public var fractalPaletteLabel: String {
+        switch fractalPaletteIndex {
+        case 0: return "Aurora"
+        case 1: return "Solar"
+        case 2: return "Abyss"
+        case 3: return "Neon"
+        case 4: return "Infra"
+        case 5: return "Glass"
+        case 6: return "Mono"
+        default: return "Prism"
+        }
+    }
+
+    public var riemannPaletteLabel: String {
+        switch riemannPaletteIndex {
+        case 0: return "Aurora"
+        case 1: return "Solar"
+        case 2: return "Abyss"
+        case 3: return "Neon"
+        case 4: return "Infra"
+        case 5: return "Glass"
+        case 6: return "Mono"
+        default: return "Prism"
         }
     }
 
@@ -192,6 +226,51 @@ public final class SessionViewModel: ObservableObject {
 
         let next = (tunnelVariantIndex + 1) % 3
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncRendererState()
+    }
+
+    public func setTunnelVariant(index: Int) {
+        guard session.activeModeID == .tunnelCels else { return }
+        guard let descriptor = parameterStore.descriptor(for: "mode.tunnelCels.variant") else { return }
+
+        let clamped = min(max(index, 0), 2)
+        parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
+        syncRendererState()
+    }
+
+    public func cycleFractalPaletteVariant() {
+        guard session.activeModeID == .fractalCaustics else { return }
+        guard let descriptor = parameterStore.descriptor(for: "mode.fractalCaustics.paletteVariant") else { return }
+
+        let next = (fractalPaletteIndex + 1) % 8
+        parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncRendererState()
+    }
+
+    public func setFractalPaletteVariant(index: Int) {
+        guard session.activeModeID == .fractalCaustics else { return }
+        guard let descriptor = parameterStore.descriptor(for: "mode.fractalCaustics.paletteVariant") else { return }
+
+        let clamped = min(max(index, 0), 7)
+        parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
+        syncRendererState()
+    }
+
+    public func cycleRiemannPaletteVariant() {
+        guard session.activeModeID == .riemannCorridor else { return }
+        guard let descriptor = parameterStore.descriptor(for: "mode.riemannCorridor.paletteVariant") else { return }
+
+        let next = (riemannPaletteIndex + 1) % 8
+        parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncRendererState()
+    }
+
+    public func setRiemannPaletteVariant(index: Int) {
+        guard session.activeModeID == .riemannCorridor else { return }
+        guard let descriptor = parameterStore.descriptor(for: "mode.riemannCorridor.paletteVariant") else { return }
+
+        let clamped = min(max(index, 0), 7)
+        parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
         syncRendererState()
     }
 
@@ -327,6 +406,16 @@ public final class SessionViewModel: ObservableObject {
     private var tunnelVariantIndex: Int {
         let value = parameterStore.value(for: "mode.tunnelCels.variant", scope: .mode(.tunnelCels))?.scalarValue ?? 0
         return min(max(Int(value.rounded()), 0), 2)
+    }
+
+    private var fractalPaletteIndex: Int {
+        let value = parameterStore.value(for: "mode.fractalCaustics.paletteVariant", scope: .mode(.fractalCaustics))?.scalarValue ?? 0
+        return min(max(Int(value.rounded()), 0), 7)
+    }
+
+    private var riemannPaletteIndex: Int {
+        let value = parameterStore.value(for: "mode.riemannCorridor.paletteVariant", scope: .mode(.riemannCorridor))?.scalarValue ?? 0
+        return min(max(Int(value.rounded()), 0), 7)
     }
 
     private func bindCameraFeedbackStream() {

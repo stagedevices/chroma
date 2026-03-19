@@ -4,6 +4,8 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
     case colorShift
     case prismField
     case tunnelCels
+    case fractalCaustics
+    case riemannCorridor
 
     public var id: String { rawValue }
 
@@ -15,6 +17,10 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             return "Prism Field"
         case .tunnelCels:
             return "Tunnel Cels"
+        case .fractalCaustics:
+            return "Fractal Caustics"
+        case .riemannCorridor:
+            return "Mandelbrot"
         }
     }
     
@@ -26,6 +32,10 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             return "Refraction-driven surfaces with dense motion."
         case .tunnelCels:
             return "Attack-spawned cel objects in a stage tunnel."
+        case .fractalCaustics:
+            return "Orbit-trap Julia caustics with attack pulses."
+        case .riemannCorridor:
+            return "Audio-flown Mandelbrot traversal with contour-rich domain coloring."
         }
     }
 
@@ -40,6 +50,10 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             self = .prismField
         case Self.tunnelCels.rawValue:
             self = .tunnelCels
+        case Self.fractalCaustics.rawValue:
+            self = .fractalCaustics
+        case Self.riemannCorridor.rawValue:
+            self = .riemannCorridor
         case "spectralBloom", "attackParticleHalo", "monochromePulse":
             self = .colorShift
         default:

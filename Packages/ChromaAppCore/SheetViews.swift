@@ -22,6 +22,7 @@ struct ModePickerSheet: View {
             }
             .font(ChromaTypography.body)
             .navigationTitle("MODES")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("CLOSE", action: dismiss)
@@ -43,6 +44,7 @@ struct FeedbackSetupSheet: View {
             }
             .font(ChromaTypography.body)
             .navigationTitle("FEEDBACK")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("CLOSE", action: dismiss)
@@ -100,6 +102,123 @@ struct FeedbackSetupSheet: View {
     }
 }
 
+struct TunnelVariantPickerSheet: View {
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+
+    private let options: [(index: Int, title: String, summary: String)] = [
+        (0, "Cel Cards", "Flat graphic cards with clean tunnel silhouettes."),
+        (1, "Prism Shards", "Facet-driven shard silhouettes with angular edges."),
+        (2, "Glyph Slabs", "Thicker slab silhouettes with bold panel feel."),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List(options, id: \.index) { option in
+                Button {
+                    sessionViewModel.setTunnelVariant(index: option.index)
+                    dismiss()
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(option.title)
+                                .font(ChromaTypography.sheetRowTitle)
+                            Text(option.summary)
+                                .font(ChromaTypography.bodySecondary)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if option.title == sessionViewModel.tunnelVariantLabel {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+            .font(ChromaTypography.body)
+            .navigationTitle("VARIANT")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("CLOSE", action: dismiss)
+                }
+            }
+        }
+    }
+}
+
+struct FractalPalettePickerSheet: View {
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+
+    private let paletteNames = ["Aurora", "Solar", "Abyss", "Neon", "Infra", "Glass", "Mono", "Prism"]
+
+    var body: some View {
+        NavigationStack {
+            List(Array(paletteNames.enumerated()), id: \.offset) { offset, name in
+                Button {
+                    sessionViewModel.setFractalPaletteVariant(index: offset)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(name)
+                            .font(ChromaTypography.sheetRowTitle)
+                        Spacer()
+                        if name == sessionViewModel.fractalPaletteLabel {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+            .font(ChromaTypography.body)
+            .navigationTitle("PALETTE")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("CLOSE", action: dismiss)
+                }
+            }
+        }
+    }
+}
+
+struct RiemannPalettePickerSheet: View {
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+
+    private let paletteNames = ["Aurora", "Solar", "Abyss", "Neon", "Infra", "Glass", "Mono", "Prism"]
+
+    var body: some View {
+        NavigationStack {
+            List(Array(paletteNames.enumerated()), id: \.offset) { offset, name in
+                Button {
+                    sessionViewModel.setRiemannPaletteVariant(index: offset)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(name)
+                            .font(ChromaTypography.sheetRowTitle)
+                        Spacer()
+                        if name == sessionViewModel.riemannPaletteLabel {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+            .font(ChromaTypography.body)
+            .navigationTitle("PALETTE")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("CLOSE", action: dismiss)
+                }
+            }
+        }
+    }
+}
+
 struct PresetBrowserSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
@@ -130,6 +249,7 @@ struct PresetBrowserSheet: View {
             }
             .font(ChromaTypography.body)
             .navigationTitle("PRESETS")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("CLOSE", action: dismiss)
@@ -151,6 +271,7 @@ struct RecorderExportSheet: View {
             }
             .font(ChromaTypography.body)
             .navigationTitle("RECORDER / EXPORT")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("CLOSE", action: dismiss)
@@ -200,12 +321,14 @@ struct SettingsDiagnosticsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                liveControlsSection
                 audioInputSection
                 outputSection
                 diagnosticsSection
             }
             .font(ChromaTypography.body)
             .navigationTitle("SETTINGS / DIAGNOSTICS")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("REFRESH") {
@@ -217,6 +340,26 @@ struct SettingsDiagnosticsSheet: View {
                     Button("CLOSE", action: dismiss)
                 }
             }
+        }
+    }
+
+    private var liveControlsSection: some View {
+        Section {
+            Text(sessionViewModel.activeModeDescriptor.name)
+                .font(ChromaTypography.bodySecondary)
+                .foregroundStyle(.secondary)
+
+            ForEach(sessionViewModel.primarySurfaceControlDescriptors) { descriptor in
+                SettingsSurfaceSliderRow(
+                    descriptor: descriptor,
+                    value: sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0,
+                    onChange: { newValue in
+                        sessionViewModel.updateParameter(descriptor, value: .scalar(newValue))
+                    }
+                )
+            }
+        } header: {
+            sectionHeader("Live Controls")
         }
     }
 
@@ -305,6 +448,38 @@ struct SettingsDiagnosticsSheet: View {
         Text(title.uppercased())
             .font(ChromaTypography.sheetSectionHeader)
             .tracking(1.4)
+    }
+}
+
+private struct SettingsSurfaceSliderRow: View {
+    let descriptor: ParameterDescriptor
+    let value: Double
+    let onChange: (Double) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(descriptor.title.uppercased())
+                    .font(ChromaTypography.action)
+                    .tracking(0.6)
+                Spacer(minLength: 12)
+                Text(String(format: "%.2f", value))
+                    .font(ChromaTypography.metric.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { value },
+                    set: { newValue in
+                        onChange(newValue)
+                    }
+                ),
+                in: (descriptor.minimumValue ?? 0) ... (descriptor.maximumValue ?? 1)
+            )
+            .tint(.white)
+        }
+        .padding(.vertical, 4)
     }
 }
 

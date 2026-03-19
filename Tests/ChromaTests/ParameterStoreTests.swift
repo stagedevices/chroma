@@ -57,6 +57,12 @@ final class ParameterStoreTests: XCTestCase {
         let colorShiftSurface = ParameterCatalog.surfaceControlParameterIDs(for: .colorShift)
         let prismQuick = ParameterCatalog.quickControlParameterIDs(for: .prismField)
         let prismSurface = ParameterCatalog.surfaceControlParameterIDs(for: .prismField)
+        let tunnelQuick = ParameterCatalog.quickControlParameterIDs(for: .tunnelCels)
+        let tunnelSurface = ParameterCatalog.surfaceControlParameterIDs(for: .tunnelCels)
+        let fractalQuick = ParameterCatalog.quickControlParameterIDs(for: .fractalCaustics)
+        let fractalSurface = ParameterCatalog.surfaceControlParameterIDs(for: .fractalCaustics)
+        let riemannQuick = ParameterCatalog.quickControlParameterIDs(for: .riemannCorridor)
+        let riemannSurface = ParameterCatalog.surfaceControlParameterIDs(for: .riemannCorridor)
 
         XCTAssertFalse(colorShiftQuick.contains("output.blackFloor"))
         XCTAssertFalse(colorShiftSurface.contains("output.blackFloor"))
@@ -66,6 +72,36 @@ final class ParameterStoreTests: XCTestCase {
         XCTAssertTrue(prismSurface.contains("mode.prismField.dispersion"))
         XCTAssertTrue(prismQuick.contains("output.blackFloor"))
         XCTAssertTrue(prismSurface.contains("output.blackFloor"))
+        XCTAssertTrue(tunnelQuick.contains("mode.tunnelCels.shapeScale"))
+        XCTAssertTrue(tunnelQuick.contains("mode.tunnelCels.depthSpeed"))
+        XCTAssertTrue(tunnelQuick.contains("mode.tunnelCels.releaseTail"))
+        XCTAssertTrue(tunnelQuick.contains("output.blackFloor"))
+        XCTAssertTrue(tunnelSurface.contains("mode.tunnelCels.shapeScale"))
+        XCTAssertTrue(tunnelSurface.contains("mode.tunnelCels.depthSpeed"))
+        XCTAssertTrue(tunnelSurface.contains("mode.tunnelCels.releaseTail"))
+        XCTAssertTrue(tunnelSurface.contains("output.blackFloor"))
+        XCTAssertFalse(tunnelQuick.contains("mode.tunnelCels.variant"))
+        XCTAssertFalse(tunnelSurface.contains("mode.tunnelCels.variant"))
+        XCTAssertTrue(fractalQuick.contains("mode.fractalCaustics.detail"))
+        XCTAssertTrue(fractalQuick.contains("mode.fractalCaustics.flowRate"))
+        XCTAssertTrue(fractalQuick.contains("mode.fractalCaustics.attackBloom"))
+        XCTAssertTrue(fractalQuick.contains("output.blackFloor"))
+        XCTAssertTrue(fractalSurface.contains("mode.fractalCaustics.detail"))
+        XCTAssertTrue(fractalSurface.contains("mode.fractalCaustics.flowRate"))
+        XCTAssertTrue(fractalSurface.contains("mode.fractalCaustics.attackBloom"))
+        XCTAssertTrue(fractalSurface.contains("output.blackFloor"))
+        XCTAssertFalse(fractalQuick.contains("mode.fractalCaustics.paletteVariant"))
+        XCTAssertFalse(fractalSurface.contains("mode.fractalCaustics.paletteVariant"))
+        XCTAssertTrue(riemannQuick.contains("mode.riemannCorridor.detail"))
+        XCTAssertTrue(riemannQuick.contains("mode.riemannCorridor.flowRate"))
+        XCTAssertTrue(riemannQuick.contains("mode.riemannCorridor.zeroBloom"))
+        XCTAssertTrue(riemannQuick.contains("output.blackFloor"))
+        XCTAssertTrue(riemannSurface.contains("mode.riemannCorridor.detail"))
+        XCTAssertTrue(riemannSurface.contains("mode.riemannCorridor.flowRate"))
+        XCTAssertTrue(riemannSurface.contains("mode.riemannCorridor.zeroBloom"))
+        XCTAssertTrue(riemannSurface.contains("output.blackFloor"))
+        XCTAssertFalse(riemannQuick.contains("mode.riemannCorridor.paletteVariant"))
+        XCTAssertFalse(riemannSurface.contains("mode.riemannCorridor.paletteVariant"))
     }
 
     func testPrismFieldParameterDescriptorsAreStable() {
@@ -87,5 +123,107 @@ final class ParameterStoreTests: XCTestCase {
         XCTAssertEqual(dispersion.maximumValue ?? -1, 1, accuracy: 0.0001)
         XCTAssertEqual(facetDensity.defaultValue.scalarValue ?? -1, 0.58, accuracy: 0.0001)
         XCTAssertEqual(dispersion.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
+    }
+
+    func testTunnelCelsParameterDescriptorsAreStable() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        let shapeScale = store.descriptor(for: "mode.tunnelCels.shapeScale")
+        let depthSpeed = store.descriptor(for: "mode.tunnelCels.depthSpeed")
+        let releaseTail = store.descriptor(for: "mode.tunnelCels.releaseTail")
+        let variant = store.descriptor(for: "mode.tunnelCels.variant")
+
+        XCTAssertNotNil(shapeScale)
+        XCTAssertNotNil(depthSpeed)
+        XCTAssertNotNil(releaseTail)
+        XCTAssertNotNil(variant)
+        guard let shapeScale, let depthSpeed, let releaseTail, let variant else {
+            return XCTFail("Expected tunnel cels parameter descriptors")
+        }
+
+        XCTAssertEqual(shapeScale.scope, .mode(.tunnelCels))
+        XCTAssertEqual(depthSpeed.scope, .mode(.tunnelCels))
+        XCTAssertEqual(releaseTail.scope, .mode(.tunnelCels))
+        XCTAssertEqual(variant.scope, .mode(.tunnelCels))
+        XCTAssertEqual(shapeScale.defaultValue.scalarValue ?? -1, 0.56, accuracy: 0.0001)
+        XCTAssertEqual(depthSpeed.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(releaseTail.defaultValue.scalarValue ?? -1, 0.58, accuracy: 0.0001)
+        XCTAssertEqual(variant.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(variant.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(variant.maximumValue ?? -1, 2, accuracy: 0.0001)
+    }
+
+    func testFractalCausticsParameterDescriptorsAreStable() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        let detail = store.descriptor(for: "mode.fractalCaustics.detail")
+        let flowRate = store.descriptor(for: "mode.fractalCaustics.flowRate")
+        let attackBloom = store.descriptor(for: "mode.fractalCaustics.attackBloom")
+        let palette = store.descriptor(for: "mode.fractalCaustics.paletteVariant")
+
+        XCTAssertNotNil(detail)
+        XCTAssertNotNil(flowRate)
+        XCTAssertNotNil(attackBloom)
+        XCTAssertNotNil(palette)
+        guard let detail, let flowRate, let attackBloom, let palette else {
+            return XCTFail("Expected fractal caustics parameter descriptors")
+        }
+
+        XCTAssertEqual(detail.scope, .mode(.fractalCaustics))
+        XCTAssertEqual(flowRate.scope, .mode(.fractalCaustics))
+        XCTAssertEqual(attackBloom.scope, .mode(.fractalCaustics))
+        XCTAssertEqual(palette.scope, .mode(.fractalCaustics))
+        XCTAssertEqual(detail.defaultValue.scalarValue ?? -1, 0.60, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.defaultValue.scalarValue ?? -1, 0.56, accuracy: 0.0001)
+        XCTAssertEqual(attackBloom.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(palette.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(detail.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(detail.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(attackBloom.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(attackBloom.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(palette.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(palette.maximumValue ?? -1, 7, accuracy: 0.0001)
+    }
+
+    func testRiemannCorridorParameterDescriptorsAreStable() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        let detail = store.descriptor(for: "mode.riemannCorridor.detail")
+        let flowRate = store.descriptor(for: "mode.riemannCorridor.flowRate")
+        let zeroBloom = store.descriptor(for: "mode.riemannCorridor.zeroBloom")
+        let palette = store.descriptor(for: "mode.riemannCorridor.paletteVariant")
+
+        XCTAssertNotNil(detail)
+        XCTAssertNotNil(flowRate)
+        XCTAssertNotNil(zeroBloom)
+        XCTAssertNotNil(palette)
+        guard let detail, let flowRate, let zeroBloom, let palette else {
+            return XCTFail("Expected riemann corridor parameter descriptors")
+        }
+
+        XCTAssertEqual(detail.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(flowRate.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(zeroBloom.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(palette.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(detail.defaultValue.scalarValue ?? -1, 0.60, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.defaultValue.scalarValue ?? -1, 0.56, accuracy: 0.0001)
+        XCTAssertEqual(zeroBloom.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(palette.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(detail.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(detail.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(flowRate.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(zeroBloom.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(zeroBloom.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(palette.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(palette.maximumValue ?? -1, 7, accuracy: 0.0001)
+    }
+
+    func testMandelbrotModeLabelKeepsStableID() {
+        XCTAssertEqual(VisualModeID.riemannCorridor.rawValue, "riemannCorridor")
+        XCTAssertEqual(VisualModeID.riemannCorridor.displayName, "Mandelbrot")
+
+        let modeDescriptor = ParameterCatalog.modes.first { $0.id == .riemannCorridor }
+        XCTAssertNotNil(modeDescriptor)
+        XCTAssertEqual(modeDescriptor?.name, "Mandelbrot")
     }
 }

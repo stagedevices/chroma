@@ -16,6 +16,9 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - sheet views including `FeedbackSetupSheet`
 - renderer host embedding view
 - fullscreen chrome-hide/reveal behavior
+- iOS tile-based top action deck (2-column tiles, medium-first sheet routing)
+- mode-style picker sheets for Tunnel `Variant` and Fractal/Mandelbrot `Palette`
+- iOS settings sheet as the home for live mode controls (persistent bottom sliders removed on iOS)
 
 ### `Packages/ChromaDomain`
 - `ChromaSession`
@@ -70,6 +73,9 @@ Owns the app entry point, platform scene configuration, app assets, and target m
   - `Color Shift` flat backfill
   - Color Shift `Contour Flow` feedback passes (contour/evolve/present)
   - `Prism Field`
+  - `Tunnel Cels` (field/shapes/composite multipass)
+  - `Fractal Caustics` (field/accents/composite multipass)
+  - `Mandelbrot` (field/accents/composite multipass with traversal-driven domain coloring and attack-gated minibrot handoffs)
 
 ### `Packages/ChromaPresets`
 - `PresetService`

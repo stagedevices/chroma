@@ -76,6 +76,56 @@ public struct RendererSurfaceStateMapper {
             fallback: 0
         )
         let tunnelVariant = min(max(Double(Int(tunnelVariantRaw.rounded())), 0), 2)
+        let fractalDetail = scalarValue(
+            parameterID: "mode.fractalCaustics.detail",
+            scope: .mode(.fractalCaustics),
+            parameterStore: parameterStore,
+            fallback: 0.60
+        )
+        let fractalFlowRate = scalarValue(
+            parameterID: "mode.fractalCaustics.flowRate",
+            scope: .mode(.fractalCaustics),
+            parameterStore: parameterStore,
+            fallback: 0.56
+        )
+        let fractalAttackBloom = scalarValue(
+            parameterID: "mode.fractalCaustics.attackBloom",
+            scope: .mode(.fractalCaustics),
+            parameterStore: parameterStore,
+            fallback: 0.62
+        )
+        let fractalPaletteRaw = scalarValue(
+            parameterID: "mode.fractalCaustics.paletteVariant",
+            scope: .mode(.fractalCaustics),
+            parameterStore: parameterStore,
+            fallback: 0
+        )
+        let fractalPaletteVariant = min(max(Double(Int(fractalPaletteRaw.rounded())), 0), 7)
+        let riemannDetail = scalarValue(
+            parameterID: "mode.riemannCorridor.detail",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.60
+        )
+        let riemannFlowRate = scalarValue(
+            parameterID: "mode.riemannCorridor.flowRate",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.56
+        )
+        let riemannZeroBloom = scalarValue(
+            parameterID: "mode.riemannCorridor.zeroBloom",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.62
+        )
+        let riemannPaletteRaw = scalarValue(
+            parameterID: "mode.riemannCorridor.paletteVariant",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0
+        )
+        let riemannPaletteVariant = min(max(Double(Int(riemannPaletteRaw.rounded())), 0), 7)
         let noImageInSilence = parameterStore.value(for: "output.noImageInSilence", scope: .global)?.toggleValue ?? false
 
         let scale: Double
@@ -90,6 +140,12 @@ public struct RendererSurfaceStateMapper {
         case .tunnelCels:
             scale = tunnelShapeScale
             motion = tunnelDepthSpeed
+        case .fractalCaustics:
+            scale = fractalDetail
+            motion = fractalFlowRate
+        case .riemannCorridor:
+            scale = riemannDetail
+            motion = riemannFlowRate
         }
 
         // Task 003 bridge: live features can gently modulate manual controls.
@@ -134,6 +190,14 @@ public struct RendererSurfaceStateMapper {
                 tunnelDepthSpeed: tunnelDepthSpeed,
                 tunnelReleaseTail: tunnelReleaseTail,
                 tunnelVariant: tunnelVariant,
+                fractalDetail: fractalDetail,
+                fractalFlowRate: fractalFlowRate,
+                fractalAttackBloom: fractalAttackBloom,
+                fractalPaletteVariant: fractalPaletteVariant,
+                riemannDetail: riemannDetail,
+                riemannFlowRate: riemannFlowRate,
+                riemannZeroBloom: riemannZeroBloom,
+                riemannPaletteVariant: riemannPaletteVariant,
                 featureAmplitude: featureAmplitude,
                 lowBandEnergy: featureLowBand,
                 midBandEnergy: featureMidBand,
