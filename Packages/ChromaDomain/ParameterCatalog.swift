@@ -1,0 +1,240 @@
+import Foundation
+
+public enum ParameterCatalog {
+    public static let modes: [VisualModeDescriptor] = [
+        VisualModeDescriptor(
+            id: .colorShift,
+            name: VisualModeID.colorShift.displayName,
+            summary: "Flat stage backfill; weighted live input drives hue changes only.",
+            supportsMorphing: true
+        ),
+        VisualModeDescriptor(
+            id: .prismField,
+            name: VisualModeID.prismField.displayName,
+            summary: "Refracted ribbons and split-spectrum spread.",
+            supportsMorphing: true
+        ),
+        VisualModeDescriptor(
+            id: .tunnelCels,
+            name: VisualModeID.tunnelCels.displayName,
+            summary: "Attack-spawned cel forms in an infinite stage tunnel.",
+            supportsMorphing: true
+        ),
+    ]
+
+    public static let descriptors: [ParameterDescriptor] = [
+        ParameterDescriptor(
+            id: "response.inputGain",
+            title: "Input Gain",
+            summary: "Global front-end gain trim for live response.",
+            group: .input,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.72),
+            minimumValue: 0.0,
+            maximumValue: 1.5
+        ),
+        ParameterDescriptor(
+            id: "response.smoothing",
+            title: "Smoothing",
+            summary: "Global response damping for envelope stability.",
+            group: .response,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.38),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.colorShift.hueResponse",
+            title: "Hue Response",
+            summary: "How strongly live input and motion weighting push hue movement.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.colorShift),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.66),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.colorShift.hueRange",
+            title: "Hue Range",
+            summary: "Span of hue rotation available to weighted amplitude and control input.",
+            group: .color,
+            tier: .basic,
+            scope: .mode(.colorShift),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.74),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.prismField.facetDensity",
+            title: "Facet Density",
+            summary: "Prism facet complexity and caustic cell frequency.",
+            group: .geometry,
+            tier: .basic,
+            scope: .mode(.prismField),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.58),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.prismField.dispersion",
+            title: "Dispersion",
+            summary: "Chromatic split strength and refractive sharpness.",
+            group: .color,
+            tier: .basic,
+            scope: .mode(.prismField),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.62),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.tunnelCels.shapeScale",
+            title: "Shape Scale",
+            summary: "Overall cel object footprint within tunnel perspective.",
+            group: .geometry,
+            tier: .basic,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.56),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.tunnelCels.depthSpeed",
+            title: "Depth Speed",
+            summary: "Forward tunnel travel speed and parallax progression.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.62),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.tunnelCels.releaseTail",
+            title: "Release Tail",
+            summary: "Release duration for attack-spawned shape envelopes.",
+            group: .response,
+            tier: .basic,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.58),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.tunnelCels.variant",
+            title: "Variant",
+            summary: "Style selector: cel cards, prism shards, or glyph slabs.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 2.0
+        ),
+        ParameterDescriptor(
+            id: "output.blackFloor",
+            title: "Black Floor",
+            summary: "Output floor to preserve darkness between events.",
+            group: .output,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.86),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "output.noImageInSilence",
+            title: "No Image In Silence",
+            summary: "Drops output to black when live energy falls below threshold.",
+            group: .output,
+            tier: .advanced,
+            scope: .global,
+            controlStyle: .toggle,
+            defaultValue: .toggle(false)
+        ),
+    ]
+
+    public static let defaultDisplayTargets: [DisplayTarget] = [
+        DisplayTarget(id: "device", name: "Device Screen", kind: .deviceScreen, isAvailable: true, supportsFullscreen: true),
+        DisplayTarget(id: "external", name: "External Display", kind: .externalDisplay, isAvailable: false, supportsFullscreen: true),
+    ]
+
+    public static let exportProfiles: [ExportProfile] = [
+        ExportProfile(id: "capture-1080p", name: "Capture 1080p", resolutionLabel: "1920x1080", frameRate: 60, codec: "HEVC"),
+        ExportProfile(id: "rehearsal-prores", name: "Rehearsal ProRes", resolutionLabel: "1920x1080", frameRate: 30, codec: "ProRes 422"),
+    ]
+
+    public static func modeDescriptor(for modeID: VisualModeID) -> VisualModeDescriptor {
+        modes.first(where: { $0.id == modeID }) ?? modes[0]
+    }
+
+    public static func quickControlParameterIDs(for modeID: VisualModeID) -> [String] {
+        switch modeID {
+        case .colorShift:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.colorShift.hueResponse",
+                "mode.colorShift.hueRange",
+            ]
+        case .prismField:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.prismField.facetDensity",
+                "mode.prismField.dispersion",
+                "output.blackFloor",
+            ]
+        case .tunnelCels:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.tunnelCels.shapeScale",
+                "mode.tunnelCels.depthSpeed",
+                "mode.tunnelCels.releaseTail",
+                "output.blackFloor",
+            ]
+        }
+    }
+
+    public static func surfaceControlParameterIDs(for modeID: VisualModeID) -> [String] {
+        switch modeID {
+        case .colorShift:
+            return [
+                "response.inputGain",
+                "mode.colorShift.hueResponse",
+                "mode.colorShift.hueRange",
+            ]
+        case .prismField:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.prismField.facetDensity",
+                "mode.prismField.dispersion",
+                "output.blackFloor",
+            ]
+        case .tunnelCels:
+            return [
+                "response.inputGain",
+                "response.smoothing",
+                "mode.tunnelCels.shapeScale",
+                "mode.tunnelCels.depthSpeed",
+                "mode.tunnelCels.releaseTail",
+                "output.blackFloor",
+            ]
+        }
+    }
+}

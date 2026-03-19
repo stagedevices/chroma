@@ -1,0 +1,36 @@
+{
+  "fill" : "system-light",
+  "groups" : [
+    {
+      "blur-material" : 1,
+      "layers" : [
+        {
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "position" : {
+            "scale" : 1.64,
+            "translation-in-points" : [
+              154.16000000000008,
+              -135.29999999999995
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 1
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 1
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

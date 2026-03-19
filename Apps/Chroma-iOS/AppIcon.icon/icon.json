@@ -1,0 +1,263 @@
+{
+  "fill" : "system-light",
+  "groups" : [
+    {
+      "blend-mode" : "overlay",
+      "blur-material" : 1,
+      "layers" : [
+        {
+          "blend-mode" : "overlay",
+          "image-name" : "box 4.png",
+          "name" : "box 4"
+        },
+        {
+          "blend-mode" : "normal",
+          "image-name" : "box 4.png",
+          "name" : "box 4"
+        },
+        {
+          "blend-mode" : "normal",
+          "image-name" : "box 4.png",
+          "name" : "box 4"
+        },
+        {
+          "blend-mode" : "normal",
+          "image-name" : "box 4.png",
+          "name" : "box 4"
+        },
+        {
+          "blend-mode" : "normal",
+          "image-name" : "box 4.png",
+          "name" : "box 4"
+        }
+      ],
+      "opacity" : 1,
+      "position" : {
+        "scale" : 2.85,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 1
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 1
+      }
+    },
+    {
+      "blend-mode" : "darken",
+      "blur-material" : 0.87,
+      "layers" : [
+        {
+          "blend-mode" : "plus-lighter",
+          "fill" : {
+            "solid" : "srgb:0.99953,0.98836,0.47266,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 0.39,
+          "position" : {
+            "scale" : 1.63,
+            "translation-in-points" : [
+              154.16000000000008,
+              -135.29999999999995
+            ]
+          }
+        },
+        {
+          "blend-mode" : "overlay",
+          "fill" : "automatic",
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1.63,
+            "translation-in-points" : [
+              154.16000000000008,
+              -135.29999999999995
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 0.22,
+          "position" : {
+            "scale" : 1.66,
+            "translation-in-points" : [
+              156.2,
+              -136.3
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "opacity" : 0.76,
+      "position" : {
+        "scale" : 0.74,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.49
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.83
+      }
+    },
+    {
+      "blend-mode" : "screen",
+      "blur-material" : 0.87,
+      "layers" : [
+        {
+          "blend-mode" : "plus-lighter",
+          "fill" : {
+            "solid" : "srgb:0.99953,0.98836,0.47266,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 0.39,
+          "position" : {
+            "scale" : 1.63,
+            "translation-in-points" : [
+              154.16000000000008,
+              -135.29999999999995
+            ]
+          }
+        },
+        {
+          "blend-mode" : "screen",
+          "fill" : "automatic",
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1.63,
+            "translation-in-points" : [
+              154.16000000000008,
+              -135.29999999999995
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "c 2.png",
+          "name" : "c 2",
+          "opacity" : 0.22,
+          "position" : {
+            "scale" : 1.66,
+            "translation-in-points" : [
+              156.2,
+              -136.3
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "position" : {
+        "scale" : 0.74,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.49
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.83
+      }
+    },
+    {
+      "blend-mode" : "overlay",
+      "blur-material" : 1,
+      "hidden" : false,
+      "layers" : [
+        {
+          "blend-mode" : "plus-lighter",
+          "fill" : {
+            "linear-gradient" : [
+              "srgb:1.00000,1.00000,1.00000,1.00000",
+              "srgb:0.92143,0.92145,0.92144,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0
+              },
+              "stop" : {
+                "x" : 0.48208694605009633,
+                "y" : 0.9567301902697495
+              }
+            }
+          },
+          "image-name" : "rim.png",
+          "name" : "rim",
+          "opacity" : 0.81,
+          "position" : {
+            "scale" : 1.73,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+          },
+          "image-name" : "rim.png",
+          "name" : "rim",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1.73,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name" : "Group",
+      "opacity" : 1,
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.26
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
