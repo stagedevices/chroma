@@ -19,6 +19,20 @@ public enum AppSheetDetentStyle: Equatable, Sendable {
     case mediumAndLarge
 }
 
+public enum AppSheetPresentationStyle: Equatable, Sendable {
+    case sheet
+    case popover
+}
+
+public func appSheetPresentationStyle(for destination: AppSheetDestination) -> AppSheetPresentationStyle {
+    switch destination {
+    case .modePicker, .presetBrowser, .recorderExport, .settingsDiagnostics:
+        return .sheet
+    case .feedbackSetup, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
+        return .popover
+    }
+}
+
 public func appSheetDetentStyle(for destination: AppSheetDestination) -> AppSheetDetentStyle {
     switch destination {
     case .modePicker, .presetBrowser, .settingsDiagnostics:

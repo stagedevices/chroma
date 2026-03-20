@@ -33,12 +33,27 @@ public struct RendererSurfaceStateMapper {
             parameterStore: parameterStore,
             fallback: 0.66
         )
-        let hueRange = scalarValue(
+        let hueRange = colorShiftHueRangeValue(
             parameterID: "mode.colorShift.hueRange",
             scope: .mode(.colorShift),
             parameterStore: parameterStore,
-            fallback: 0.74
+            fallbackMin: 0.13,
+            fallbackMax: 0.87,
+            fallbackOutside: false
         )
+        let hueCenterTrim = scalarValue(
+            parameterID: "mode.colorShift.hueCenterTrim",
+            scope: .mode(.colorShift),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
+        let colorShiftExcitementModeRaw = scalarValue(
+            parameterID: "mode.colorShift.excitementMode",
+            scope: .mode(.colorShift),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
+        let colorShiftExcitementMode = min(max(Double(Int(colorShiftExcitementModeRaw.rounded())), 0), 2)
         let prismFacetDensity = scalarValue(
             parameterID: "mode.prismField.facetDensity",
             scope: .mode(.prismField),
@@ -132,7 +147,11 @@ public struct RendererSurfaceStateMapper {
         let motion: Double
         switch session.activeModeID {
         case .colorShift:
-            scale = hueRange
+            scale = colorShiftHueArcWidth(
+                min: hueRange.min,
+                max: hueRange.max,
+                outside: hueRange.outside
+            )
             motion = hueResponse
         case .prismField:
             scale = max(diffusion, 0.2)
@@ -167,10 +186,16 @@ public struct RendererSurfaceStateMapper {
         let modulatedIntensity = intensity + (featureAmplitude * 0.38)
         let modulatedMotion = motion + (featureTransient * 0.24) + (featureAmplitude * 0.10)
 
-        let centerOffset = RendererCenterOffset(
-            x: (modulatedMotion - 0.5) * 0.22,
-            y: (0.5 - diffusion) * 0.14
-        )
+        let centerOffset: RendererCenterOffset
+        if session.activeModeID == .tunnelCels {
+            // Keep tunnel camera stable; tunnel motion should come from depth traversal, not audio-panned center snaps.
+            centerOffset = RendererCenterOffset()
+        } else {
+            centerOffset = RendererCenterOffset(
+                x: (modulatedMotion - 0.5) * 0.22,
+                y: (0.5 - diffusion) * 0.14
+            )
+        }
 
         return RendererSurfaceState(
             activeModeID: session.activeModeID,
@@ -205,6 +230,11 @@ public struct RendererSurfaceStateMapper {
                 pitchConfidence: pitchConfidence,
                 stablePitchClass: stablePitchClass,
                 stablePitchCents: stablePitchCents,
+                colorHueMin: hueRange.min,
+                colorHueMax: hueRange.max,
+                colorHueOutside: hueRange.outside,
+                colorHueShift: hueCenterTrim,
+                colorShiftExcitementMode: colorShiftExcitementMode,
                 colorShiftSaturation: 0.84,
                 isAttack: isAttack,
                 attackStrength: attackStrength,
@@ -224,5 +254,51 @@ public struct RendererSurfaceStateMapper {
         fallback: Double
     ) -> Double {
         parameterStore.value(for: parameterID, scope: scope)?.scalarValue ?? fallback
+    }
+
+    private func colorShiftHueRangeValue(
+        parameterID: String,
+        scope: ParameterScope,
+        parameterStore: ParameterStore,
+        fallbackMin: Double,
+        fallbackMax: Double,
+        fallbackOutside: Bool
+    ) -> (min: Double, max: Double, outside: Bool) {
+        guard let value = parameterStore.value(for: parameterID, scope: scope) else {
+            return (fallbackMin, fallbackMax, fallbackOutside)
+        }
+
+        if let hueRange = value.hueRangeValue {
+            return (
+                hueRange.min.clamped(to: 0 ... 1),
+                hueRange.max.clamped(to: 0 ... 1),
+                hueRange.outside
+            )
+        }
+
+        if let scalar = value.scalarValue {
+            let span = scalar.clamped(to: 0 ... 1)
+            let min = (0.5 - (span * 0.5)).clamped(to: 0 ... 1)
+            let max = (0.5 + (span * 0.5)).clamped(to: 0 ... 1)
+            return (min, max, false)
+        }
+
+        return (fallbackMin, fallbackMax, fallbackOutside)
+    }
+
+    private func colorShiftHueArcWidth(min: Double, max: Double, outside: Bool) -> Double {
+        let normalizedMin = min.clamped(to: 0 ... 1)
+        let normalizedMax = max.clamped(to: 0 ... 1)
+        let insideWidth = normalizedMax >= normalizedMin
+            ? (normalizedMax - normalizedMin)
+            : (1 - normalizedMin + normalizedMax)
+        let selectedWidth = outside ? (1 - insideWidth) : insideWidth
+        return selectedWidth.clamped(to: 0 ... 1)
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

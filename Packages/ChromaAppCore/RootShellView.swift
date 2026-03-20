@@ -1,9 +1,19 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct RootShellView: View {
     @ObservedObject private var appViewModel: AppViewModel
     @ObservedObject private var sessionViewModel: SessionViewModel
     @ObservedObject private var router: AppRouter
+    @State private var activePopoverDestination: AppSheetDestination?
+    @State private var activePopoverTileID: String?
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+    @State private var externalProgramWindow: UIWindow?
+#endif
+    @State private var inkTransitionProgress: CGFloat = 0.001
+    @State private var inkTransitionOpacity: Double = 0
 
     public init(appViewModel: AppViewModel, sessionViewModel: SessionViewModel) {
         self.appViewModel = appViewModel
@@ -44,8 +54,15 @@ public struct RootShellView: View {
                 }
                 .transition(.opacity)
             }
+
+            AppearanceInkTransitionOverlay(
+                color: isLightGlassAppearance ? Color.white : Color.black,
+                progress: inkTransitionProgress,
+                opacity: inkTransitionOpacity
+            )
+            .allowsHitTesting(false)
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         .animation(.easeInOut(duration: 0.22), value: showsChrome)
         .animation(.easeInOut(duration: 0.22), value: showsRevealControl)
         .sheet(item: Binding(
@@ -54,11 +71,29 @@ public struct RootShellView: View {
         )) { destination in
             presentedSheet(for: destination)
         }
+        .onChange(of: router.presentedSheet) { _, destination in
+            if destination != nil {
+                dismissActivePopover()
+            }
+        }
+        .onChange(of: sessionViewModel.appearanceTransitionToken) { _, _ in
+            triggerInkTransition()
+        }
         .task {
             await sessionViewModel.startRealtimeAudioPipeline()
         }
+        .onAppear {
+            syncExternalProgramWindow()
+        }
+        .onChange(of: sessionViewModel.session.outputState.selectedDisplayTargetID) { _, _ in
+            syncExternalProgramWindow()
+        }
+        .onChange(of: sessionViewModel.session.availableDisplayTargets) { _, _ in
+            syncExternalProgramWindow()
+        }
         .onDisappear {
             sessionViewModel.stopRealtimeAudioPipeline()
+            releaseExternalProgramWindow()
         }
     }
 
@@ -68,6 +103,22 @@ public struct RootShellView: View {
 
     private var showsRevealControl: Bool {
         appViewModel.isPerformanceModeEnabled && !appViewModel.isChromeVisible && appViewModel.isRevealControlVisible
+    }
+
+    private var isLightGlassAppearance: Bool {
+        sessionViewModel.isLightGlassAppearance
+    }
+
+    private var chromePrimaryColor: Color {
+        isLightGlassAppearance ? Color.black.opacity(0.90) : Color.white
+    }
+
+    private var chromeSecondaryColor: Color {
+        isLightGlassAppearance ? Color.black.opacity(0.68) : Color.white.opacity(0.76)
+    }
+
+    private var chromeBorderColor: Color {
+        isLightGlassAppearance ? Color.black.opacity(0.16) : Color.white.opacity(0.14)
     }
 
     private var isColorShiftMode: Bool {
@@ -87,17 +138,14 @@ public struct RootShellView: View {
     }
 
     private var usesTileActionDeck: Bool {
-#if targetEnvironment(macCatalyst)
-        false
-#else
         true
-#endif
     }
 
     private struct ActionTileModel: Identifiable {
         let id: String
         let title: String
         let systemImage: String
+        let destination: AppSheetDestination?
         let action: () -> Void
         var isFullscreenAction: Bool = false
     }
@@ -105,19 +153,27 @@ public struct RootShellView: View {
     private var chromeScrims: some View {
         ZStack {
             LinearGradient(
-                colors: [Color.black.opacity(0.66), .clear],
+                colors: [scrimTopColor, .clear],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
             LinearGradient(
-                colors: [.clear, Color.black.opacity(0.32)],
+                colors: [.clear, scrimBottomColor],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
         }
+    }
+
+    private var scrimTopColor: Color {
+        isLightGlassAppearance ? Color.white.opacity(0.62) : Color.black.opacity(0.66)
+    }
+
+    private var scrimBottomColor: Color {
+        isLightGlassAppearance ? Color.white.opacity(0.28) : Color.black.opacity(0.32)
     }
 
     private var topChrome: some View {
@@ -149,24 +205,24 @@ public struct RootShellView: View {
             Text("CHROMA")
                 .font(ChromaTypography.hero)
                 .tracking(1.8)
-                .foregroundStyle(.white)
+                .foregroundStyle(chromePrimaryColor)
 
-            Text(sessionViewModel.session.activePresetName.uppercased())
+            Text(sessionViewModel.activePresetDisplayName.uppercased())
                 .font(ChromaTypography.overline)
                 .tracking(4)
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(chromeSecondaryColor)
 
             Text(sessionViewModel.activeModeDescriptor.name)
                 .font(ChromaTypography.title)
-                .foregroundStyle(.white)
+                .foregroundStyle(chromePrimaryColor)
 
             Text(sessionViewModel.activeModeDescriptor.summary)
                 .font(ChromaTypography.bodySecondary)
-                .foregroundStyle(.white.opacity(0.76))
+                .foregroundStyle(chromeSecondaryColor)
                 .lineLimit(2)
                 .frame(maxWidth: 420, alignment: .leading)
         }
-        .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 6)
+        .shadow(color: (isLightGlassAppearance ? Color.white : Color.black).opacity(0.24), radius: 18, x: 0, y: 6)
     }
 
     private var actionCluster: some View {
@@ -271,74 +327,180 @@ public struct RootShellView: View {
         return VStack(alignment: .leading, spacing: 12) {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 ForEach(primaryActionTiles) { tile in
-                    ActionTileButton(
-                        title: tile.title,
-                        systemImage: tile.systemImage,
-                        isFullscreenAction: tile.isFullscreenAction,
-                        action: tile.action
-                    )
+                    actionTile(for: tile)
                 }
             }
 
+#if !targetEnvironment(macCatalyst)
             ActionMasterTile(
                 sessionViewModel: sessionViewModel,
-                modeAction: modeStyleAction,
-                openSettings: appViewModel.presentSettingsDiagnostics,
-                savePreset: { appViewModel.registerPerformanceInteraction() },
+                isLightAppearance: isLightGlassAppearance,
+                savePreset: {
+                    appViewModel.registerPerformanceInteraction()
+                    return sessionViewModel.quickSaveActiveModePreset()
+                },
                 noteInteraction: appViewModel.registerPerformanceInteraction
             )
+#endif
         }
     }
 
     private var primaryActionTiles: [ActionTileModel] {
-        [
+        var tiles: [ActionTileModel] = [
             ActionTileModel(
                 id: "modes",
                 title: "Modes",
                 systemImage: "sparkles",
+                destination: .modePicker,
                 action: appViewModel.presentModePicker
             ),
+        ]
+        if isColorShiftMode {
+            tiles.append(
+                ActionTileModel(
+                    id: "feedback",
+                    title: "Feedback",
+                    systemImage: "arrow.triangle.2.circlepath.camera",
+                    destination: .feedbackSetup,
+                    action: appViewModel.presentFeedbackSetup
+                )
+            )
+        } else if isTunnelCelsMode {
+            tiles.append(
+                ActionTileModel(
+                    id: "tunnelVariant",
+                    title: sessionViewModel.tunnelVariantLabel,
+                    systemImage: "square.3.layers.3d",
+                    destination: .tunnelVariantPicker,
+                    action: appViewModel.presentTunnelVariantPicker
+                )
+            )
+        } else if isFractalCausticsMode {
+            tiles.append(
+                ActionTileModel(
+                    id: "fractalPalette",
+                    title: sessionViewModel.fractalPaletteLabel,
+                    systemImage: "paintpalette",
+                    destination: .fractalPalettePicker,
+                    action: appViewModel.presentFractalPalettePicker
+                )
+            )
+        } else if isRiemannCorridorMode {
+            tiles.append(
+                ActionTileModel(
+                    id: "riemannPalette",
+                    title: sessionViewModel.riemannPaletteLabel,
+                    systemImage: "paintpalette",
+                    destination: .riemannPalettePicker,
+                    action: appViewModel.presentRiemannPalettePicker
+                )
+            )
+        }
+
+        tiles.append(contentsOf: [
             ActionTileModel(
                 id: "presets",
                 title: "Presets",
                 systemImage: "square.stack",
+                destination: .presetBrowser,
                 action: appViewModel.presentPresetBrowser
             ),
             ActionTileModel(
                 id: "export",
                 title: "Export",
                 systemImage: "record.circle",
+                destination: .recorderExport,
                 action: appViewModel.presentRecorderExport
+            ),
+            ActionTileModel(
+                id: "settings",
+                title: "Settings",
+                systemImage: "gearshape",
+                destination: .settingsDiagnostics,
+                action: appViewModel.presentSettingsDiagnostics
             ),
             ActionTileModel(
                 id: "fullscreen",
                 title: appViewModel.isPerformanceModeEnabled ? "Exit" : "Fullscreen",
                 systemImage: appViewModel.isPerformanceModeEnabled ? "rectangle.inset.filled.and.person.filled" : "arrow.up.left.and.arrow.down.right",
+                destination: nil,
                 action: appViewModel.togglePerformanceMode,
                 isFullscreenAction: true
             ),
-        ]
+        ])
+        return tiles
     }
 
-    private var modeStyleAction: (title: String, systemImage: String, action: () -> Void)? {
-        if isColorShiftMode {
-            return ("Feedback", "arrow.triangle.2.circlepath.camera", appViewModel.presentFeedbackSetup)
+    @ViewBuilder
+    private func actionTile(for tile: ActionTileModel) -> some View {
+        let button = ActionTileButton(
+            title: tile.title,
+            systemImage: tile.systemImage,
+            isLightAppearance: isLightGlassAppearance,
+            isFullscreenAction: tile.isFullscreenAction,
+            action: { handleActionTileTap(tile) }
+        )
+
+#if targetEnvironment(macCatalyst)
+        if let destination = tile.destination, appSheetPresentationStyle(for: destination) == .popover {
+            button
+                .popover(
+                    isPresented: popoverBinding(for: tile),
+                    attachmentAnchor: .rect(.bounds),
+                    arrowEdge: .top
+                ) {
+                    popoverContent(for: destination)
+                        .frame(minWidth: 360, idealWidth: 420, maxWidth: 520, minHeight: 300, idealHeight: 420, maxHeight: 640)
+                }
+        } else {
+            button
         }
-        if isTunnelCelsMode {
-            return (sessionViewModel.tunnelVariantLabel, "square.3.layers.3d", appViewModel.presentTunnelVariantPicker)
+#else
+        button
+#endif
+    }
+
+    private func popoverBinding(for tile: ActionTileModel) -> Binding<Bool> {
+        Binding(
+            get: {
+                activePopoverTileID == tile.id &&
+                activePopoverDestination == tile.destination
+            },
+            set: { isPresented in
+                if !isPresented {
+                    dismissActivePopover()
+                }
+            }
+        )
+    }
+
+    private func handleActionTileTap(_ tile: ActionTileModel) {
+#if targetEnvironment(macCatalyst)
+        if let destination = tile.destination,
+           appSheetPresentationStyle(for: destination) == .popover {
+            appViewModel.registerPerformanceInteraction()
+            if activePopoverTileID == tile.id && activePopoverDestination == destination {
+                dismissActivePopover()
+            } else {
+                activePopoverTileID = tile.id
+                activePopoverDestination = destination
+            }
+            return
         }
-        if isFractalCausticsMode {
-            return (sessionViewModel.fractalPaletteLabel, "paintpalette", appViewModel.presentFractalPalettePicker)
-        }
-        if isRiemannCorridorMode {
-            return (sessionViewModel.riemannPaletteLabel, "paintpalette", appViewModel.presentRiemannPalettePicker)
-        }
-        return nil
+#endif
+        dismissActivePopover()
+        tile.action()
+    }
+
+    private func dismissActivePopover() {
+        activePopoverTileID = nil
+        activePopoverDestination = nil
     }
 
     @ViewBuilder
     private func presentedSheet(for destination: AppSheetDestination) -> some View {
         let content = AnyView(sheetContent(for: destination))
+            .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         switch appSheetDetentStyle(for: destination) {
         case .mediumOnly:
             content
@@ -373,12 +535,43 @@ public struct RootShellView: View {
         }
     }
 
+    @ViewBuilder
+    private func popoverContent(for destination: AppSheetDestination) -> some View {
+        switch destination {
+        case .modePicker:
+            ModePickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .feedbackSetup:
+            FeedbackSetupSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .presetBrowser:
+            PresetBrowserSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .recorderExport:
+            RecorderExportSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .settingsDiagnostics:
+            SettingsDiagnosticsSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .tunnelVariantPicker:
+            TunnelVariantPickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .fractalPalettePicker:
+            FractalPalettePickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .riemannPalettePicker:
+            RiemannPalettePickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        }
+    }
+
     private var bottomChrome: some View {
 #if targetEnvironment(macCatalyst)
         VStack(spacing: 12) {
             Spacer(minLength: 0)
             SurfaceControlsPanel(
                 sessionViewModel: sessionViewModel,
+                isLightAppearance: isLightGlassAppearance,
                 noteInteraction: { appViewModel.registerPerformanceInteraction() }
             )
         }
@@ -398,11 +591,11 @@ public struct RootShellView: View {
                 .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
+        .foregroundStyle(chromePrimaryColor)
         .background(.regularMaterial, in: Capsule())
         .overlay {
             Capsule()
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(chromeBorderColor, lineWidth: 1)
         }
     }
 
@@ -416,17 +609,72 @@ public struct RootShellView: View {
                 .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
+        .foregroundStyle(chromePrimaryColor)
         .background(.regularMaterial, in: Capsule())
         .overlay {
             Capsule()
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(chromeBorderColor, lineWidth: 1)
+        }
+    }
+
+    private func syncExternalProgramWindow() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let externalSelected = sessionViewModel.session.outputState.selectedDisplayTargetID == "external"
+        let externalAvailable = sessionViewModel.session.availableDisplayTargets
+            .first(where: { $0.id == "external" })?
+            .isAvailable ?? false
+
+        guard externalSelected, externalAvailable else {
+            releaseExternalProgramWindow()
+            return
+        }
+
+        guard let externalScreen = UIScreen.screens.first(where: { $0 !== UIScreen.main }) else {
+            releaseExternalProgramWindow()
+            return
+        }
+
+        if let externalProgramWindow, externalProgramWindow.screen == externalScreen {
+            externalProgramWindow.isHidden = false
+            return
+        }
+
+        releaseExternalProgramWindow()
+
+        let window = UIWindow(frame: externalScreen.bounds)
+        window.screen = externalScreen
+        window.backgroundColor = isLightGlassAppearance ? .white : .black
+        window.rootViewController = UIHostingController(
+            rootView: PerformanceSurfaceView(sessionViewModel: sessionViewModel)
+                .ignoresSafeArea()
+                .background(isLightGlassAppearance ? Color.white : Color.black)
+        )
+        window.isHidden = false
+        externalProgramWindow = window
+#endif
+    }
+
+    private func releaseExternalProgramWindow() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        externalProgramWindow?.isHidden = true
+        externalProgramWindow?.rootViewController = nil
+        externalProgramWindow = nil
+#endif
+    }
+
+    private func triggerInkTransition() {
+        inkTransitionProgress = 0.001
+        inkTransitionOpacity = 0.68
+        withAnimation(.easeOut(duration: 0.75)) {
+            inkTransitionProgress = 2.2
+            inkTransitionOpacity = 0
         }
     }
 }
 
 private struct SurfaceControlsPanel: View {
     @ObservedObject var sessionViewModel: SessionViewModel
+    let isLightAppearance: Bool
     let noteInteraction: () -> Void
 
     var body: some View {
@@ -438,7 +686,7 @@ private struct SurfaceControlsPanel: View {
                         .tracking(1.8)
                     Text(sessionViewModel.activeModeDescriptor.name)
                         .font(ChromaTypography.panelTitle)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isLightAppearance ? Color.black.opacity(0.62) : .secondary)
                 }
                 Spacer(minLength: 12)
                 Text(frameSummary)
@@ -450,10 +698,16 @@ private struct SurfaceControlsPanel: View {
             ForEach(sessionViewModel.primarySurfaceControlDescriptors) { descriptor in
                 SurfaceSliderRow(
                     descriptor: descriptor,
-                    value: sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0,
+                    value: sessionViewModel.parameterValue(for: descriptor),
+                    hueShift: sessionViewModel.colorShiftHueCenterShift,
+                    isLightAppearance: isLightAppearance,
                     noteInteraction: noteInteraction,
+                    onHueShift: { delta in
+                        noteInteraction()
+                        sessionViewModel.adjustColorShiftHueCenter(by: delta)
+                    },
                     onChange: { newValue in
-                        sessionViewModel.updateParameter(descriptor, value: .scalar(newValue))
+                        sessionViewModel.updateParameter(descriptor, value: newValue)
                     }
                 )
             }
@@ -463,9 +717,9 @@ private struct SurfaceControlsPanel: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(isLightAppearance ? Color.black.opacity(0.12) : Color.white.opacity(0.12), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 8)
+        .shadow(color: (isLightAppearance ? Color.white : Color.black).opacity(0.18), radius: 20, x: 0, y: 8)
     }
 
     private var frameSummary: String {
@@ -479,48 +733,447 @@ private struct SurfaceControlsPanel: View {
 
 private struct SurfaceSliderRow: View {
     let descriptor: ParameterDescriptor
-    let value: Double
+    let value: ParameterValue
+    let hueShift: Double
+    let isLightAppearance: Bool
     let noteInteraction: () -> Void
-    let onChange: (Double) -> Void
+    let onHueShift: (Double) -> Void
+    let onChange: (ParameterValue) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        switch descriptor.controlStyle {
+        case .slider:
+            VStack(alignment: .leading, spacing: 10) {
+                if descriptor.id == "mode.colorShift.excitementMode" {
+                    let modeIndex = min(max(Int((value.scalarValue ?? 0).rounded()), 0), 2)
+                    HStack {
+                        Text(descriptor.title.uppercased())
+                            .font(ChromaTypography.action)
+                            .tracking(0.6)
+                        Spacer(minLength: 12)
+                        Text(colorShiftExcitementModeLabel(for: modeIndex).uppercased())
+                            .font(ChromaTypography.metric.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { min(max(Int((value.scalarValue ?? 0).rounded()), 0), 2) },
+                            set: { newValue in
+                                noteInteraction()
+                                onChange(.scalar(Double(newValue)))
+                            }
+                        )
+                    ) {
+                        Text("Spectral").tag(0)
+                        Text("Temporal").tag(1)
+                        Text("Pitch").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                } else {
+                    HStack {
+                        Text(descriptor.title.uppercased())
+                            .font(ChromaTypography.action)
+                            .tracking(0.6)
+                        Spacer(minLength: 12)
+                        Text(String(format: "%.2f", value.scalarValue ?? 0))
+                            .font(ChromaTypography.metric.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(
+                        value: Binding(
+                            get: { value.scalarValue ?? 0 },
+                            set: { newValue in
+                                noteInteraction()
+                                onChange(.scalar(newValue))
+                            }
+                        ),
+                        in: (descriptor.minimumValue ?? 0) ... (descriptor.maximumValue ?? 1),
+                        onEditingChanged: { _ in
+                            noteInteraction()
+                        }
+                    )
+                    .tint(isLightAppearance ? .black : .white)
+                }
+            }
+        case .toggle:
+            Toggle(isOn: Binding(
+                get: { value.toggleValue ?? false },
+                set: { isOn in
+                    noteInteraction()
+                    onChange(.toggle(isOn))
+                }
+            )) {
                 Text(descriptor.title.uppercased())
                     .font(ChromaTypography.action)
                     .tracking(0.6)
-                Spacer(minLength: 12)
-                Text(String(format: "%.2f", value))
-                    .font(ChromaTypography.metric.monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
-
-            Slider(
-                value: Binding(
-                    get: { value },
-                    set: { newValue in
-                        noteInteraction()
-                        onChange(newValue)
-                    }
-                ),
-                in: (descriptor.minimumValue ?? 0) ... (descriptor.maximumValue ?? 1),
-                onEditingChanged: { _ in
+            .tint(isLightAppearance ? .black : .white)
+        case .hueRange:
+            let hueRange = value.hueRangeValue ?? (min: 0.13, max: 0.87, outside: false)
+            HueRangeEditorRow(
+                descriptor: descriptor,
+                minValue: hueRange.min,
+                maxValue: hueRange.max,
+                outside: hueRange.outside,
+                hueShift: hueShift,
+                trackHeight: 22,
+                showsModePicker: true,
+                onChange: { minValue, maxValue, outside in
                     noteInteraction()
+                    onChange(.hueRange(min: minValue, max: maxValue, outside: outside))
+                },
+                onShift: { delta in
+                    onHueShift(delta)
                 }
             )
-            .tint(.white)
         }
+    }
+}
+
+private struct HueRangeEditorRow: View {
+    let descriptor: ParameterDescriptor
+    let minValue: Double
+    let maxValue: Double
+    let outside: Bool
+    let hueShift: Double
+    let trackHeight: CGFloat
+    let showsModePicker: Bool
+    let onChange: (Double, Double, Bool) -> Void
+    let onShift: (Double) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var primaryLabelColor: Color {
+        colorScheme == .light ? Color.black.opacity(0.84) : Color.white.opacity(0.84)
+    }
+
+    private var strongLabelColor: Color {
+        colorScheme == .light ? Color.black.opacity(0.92) : Color.white.opacity(0.92)
+    }
+
+    private var secondaryLabelColor: Color {
+        colorScheme == .light ? Color.black.opacity(0.76) : Color.white.opacity(0.78)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(descriptor.title.uppercased())
+                    .font(ChromaTypography.overline)
+                    .tracking(1.0)
+                    .lineLimit(1)
+                    .foregroundStyle(primaryLabelColor)
+
+                Spacer(minLength: 4)
+
+                if showsModePicker {
+                    Picker("", selection: Binding(
+                        get: { outside },
+                        set: { newOutside in
+                            onChange(minValue, maxValue, newOutside)
+                        }
+                    )) {
+                        Text("Inside").tag(false)
+                        Text("Outside").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 134)
+                }
+
+                Text("C \(hueDegrees(hueArcCenter(minValue: minValue, maxValue: maxValue, outside: outside, hueShift: hueShift)))°")
+                    .font(ChromaTypography.metric.monospacedDigit())
+                    .foregroundStyle(strongLabelColor)
+
+                Text(
+                    "\(hueDegrees(wrapUnitHue(minValue + hueShift)))° · \(hueDegrees(wrapUnitHue(maxValue + hueShift)))°"
+                )
+                .font(ChromaTypography.metric.monospacedDigit())
+                .foregroundStyle(secondaryLabelColor)
+
+                HueRangeTrimWheel(onDelta: onShift)
+            }
+
+            HueRangeTrack(
+                minValue: minValue,
+                maxValue: maxValue,
+                outside: outside,
+                hueShift: hueShift,
+                trackHeight: trackHeight,
+                onMinChange: { newMin in
+                    onChange(newMin, maxValue, outside)
+                },
+                onMaxChange: { newMax in
+                    onChange(minValue, newMax, outside)
+                }
+            )
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct HueRangeTrack: View {
+    let minValue: Double
+    let maxValue: Double
+    let outside: Bool
+    let hueShift: Double
+    let trackHeight: CGFloat
+    let onMinChange: (Double) -> Void
+    let onMaxChange: (Double) -> Void
+    @State private var activeHandle: HueRangeHandle?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private enum HueRangeHandle {
+        case min
+        case max
+    }
+
+    private var hueGradient: LinearGradient {
+        LinearGradient(
+            stops: stride(from: 0.0, through: 1.0, by: 1.0 / 12.0).map { location in
+                .init(color: Color(hue: wrapUnitHue(location + hueShift), saturation: 1, brightness: 1), location: location)
+            },
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let trackWidth = max(proxy.size.width, 1)
+            let trackHeight = max(proxy.size.height, 1)
+            let handleDiameter = max(trackHeight + 8, 20)
+            let handleRadius = handleDiameter * 0.5
+            let travelWidth = max(trackWidth - handleDiameter, 1)
+            let clampedMin = min(max(minValue, 0), 1)
+            let clampedMax = min(max(maxValue, 0), 1)
+            let minX = handleRadius + (CGFloat(clampedMin) * travelWidth)
+            let maxX = handleRadius + (CGFloat(clampedMax) * travelWidth)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: trackHeight * 0.5, style: .continuous)
+                    .fill(hueGradient)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: trackHeight * 0.5, style: .continuous)
+                            .fill(Color.black.opacity(0.36))
+                    }
+                    .overlay {
+                        ZStack {
+                            ForEach(Array(selectedHueIntervals(minValue: clampedMin, maxValue: clampedMax, outside: outside).enumerated()), id: \.offset) { _, interval in
+                                let startX = CGFloat(interval.0) * trackWidth
+                                let segmentWidth = max(CGFloat(interval.1 - interval.0) * trackWidth, 0)
+                                hueGradient
+                                    .frame(width: trackWidth, height: trackHeight)
+                                    .mask(
+                                        Rectangle()
+                                            .frame(width: segmentWidth, height: trackHeight)
+                                            .offset(x: startX - ((trackWidth - segmentWidth) * 0.5))
+                                    )
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: trackHeight * 0.5, style: .continuous))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: trackHeight * 0.5, style: .continuous)
+                            .stroke(
+                                colorScheme == .light ? Color.black.opacity(0.20) : Color.white.opacity(0.28),
+                                lineWidth: 1
+                            )
+                    }
+
+                Circle()
+                    .fill(.white)
+                    .frame(width: handleDiameter, height: handleDiameter)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.black.opacity(0.28), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.26), radius: 2, x: 0, y: 1)
+                    .position(x: minX, y: trackHeight * 0.5)
+                    .zIndex(activeHandle == .min ? 2 : 1)
+
+                Circle()
+                    .fill(.white)
+                    .frame(width: handleDiameter, height: handleDiameter)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.black.opacity(0.28), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.26), radius: 2, x: 0, y: 1)
+                    .position(x: maxX, y: trackHeight * 0.5)
+                    .zIndex(activeHandle == .max ? 2 : 1)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        let selectedHandle = activeHandle ?? (
+                            abs(gesture.startLocation.x - minX) <= abs(gesture.startLocation.x - maxX)
+                                ? .min
+                                : .max
+                        )
+                        if activeHandle == nil {
+                            activeHandle = selectedHandle
+                        }
+
+                        let normalized = ((gesture.location.x - handleRadius) / travelWidth).clamped(to: 0 ... 1)
+                        switch selectedHandle {
+                        case .min:
+                            onMinChange(Double(normalized))
+                        case .max:
+                            onMaxChange(Double(normalized))
+                        }
+                    }
+                    .onEnded { _ in
+                        activeHandle = nil
+                    }
+            )
+        }
+        .frame(height: trackHeight)
+    }
+}
+
+private struct HueRangeTrimWheel: View {
+    let onDelta: (Double) -> Void
+    @State private var lastTranslationY: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(colorScheme == .light ? .black.opacity(0.12) : .white.opacity(0.12))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(colorScheme == .light ? .black.opacity(0.24) : .white.opacity(0.24), lineWidth: 1)
+            VStack(spacing: 1) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                Text("TRIM")
+                    .font(.system(size: 7, weight: .black, design: .rounded))
+                    .tracking(0.6)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(colorScheme == .light ? Color.black.opacity(0.92) : Color.white.opacity(0.92))
+        }
+        .frame(width: 30, height: 32)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { gesture in
+                    let deltaY = gesture.translation.height - lastTranslationY
+                    lastTranslationY = gesture.translation.height
+                    let rawDelta = Double(-deltaY / 280.0)
+                    let clampedDelta = min(max(rawDelta, -0.06), 0.06)
+                    guard abs(clampedDelta) > 0.00001 else { return }
+                    onDelta(clampedDelta)
+                }
+                .onEnded { _ in
+                    lastTranslationY = 0
+                }
+        )
+    }
+}
+
+private func selectedHueIntervals(minValue: Double, maxValue: Double, outside: Bool) -> [(Double, Double)] {
+    let clampedMin = min(max(minValue, 0), 1)
+    let clampedMax = min(max(maxValue, 0), 1)
+    let insideIntervals: [(Double, Double)] = clampedMin <= clampedMax
+        ? [(clampedMin, clampedMax)]
+        : [(clampedMin, 1), (0, clampedMax)]
+
+    guard outside else {
+        return insideIntervals
+    }
+
+    if clampedMin <= clampedMax {
+        var intervals: [(Double, Double)] = []
+        if clampedMin > 0 {
+            intervals.append((0, clampedMin))
+        }
+        if clampedMax < 1 {
+            intervals.append((clampedMax, 1))
+        }
+        return intervals
+    }
+
+    return [(clampedMax, clampedMin)]
+}
+
+private func hueArcCenter(minValue: Double, maxValue: Double, outside: Bool, hueShift: Double = 0) -> Double {
+    let clampedMin = min(max(minValue, 0), 1)
+    let clampedMax = min(max(maxValue, 0), 1)
+    let insideWidth = wrapUnitHue(clampedMax - clampedMin)
+    let (start, width): (Double, Double) = outside
+        ? (clampedMax, max(1 - insideWidth, 0))
+        : (clampedMin, insideWidth)
+    return wrapUnitHue(start + (width * 0.5) + hueShift)
+}
+
+private func wrapUnitHue(_ value: Double) -> Double {
+    let wrapped = value - floor(value)
+    return wrapped < 0 ? wrapped + 1 : wrapped
+}
+
+private func hueDegrees(_ normalizedHue: Double) -> Int {
+    let clamped = min(max(normalizedHue, 0), 1)
+    return Int((clamped * 360).rounded()) % 360
+}
+
+private func colorShiftExcitementModeLabel(for index: Int) -> String {
+    switch index {
+    case 1:
+        return "Temporal"
+    case 2:
+        return "Pitch"
+    default:
+        return "Spectral"
     }
 }
 
 private struct ActionTileButton: View {
     let title: String
     let systemImage: String
+    let isLightAppearance: Bool
     let isFullscreenAction: Bool
     let action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var symbolEffectToken = UUID()
+    @State private var isHovered = false
+
+    private var usesDesktopHoverAffordance: Bool {
+#if targetEnvironment(macCatalyst)
+        true
+#else
+        false
+#endif
+    }
+
+    private var foregroundPrimary: Color {
+        isLightAppearance ? Color.black.opacity(0.90) : Color.white
+    }
+
+    private var foregroundSecondary: Color {
+        isLightAppearance ? Color.black.opacity(isFullscreenAction ? 0.92 : 0.72) : Color.white.opacity(isFullscreenAction ? 0.95 : 0.70)
+    }
+
+    private var iconBackground: Color {
+        isLightAppearance ? Color.black.opacity(isFullscreenAction ? 0.12 : 0.08) : Color.white.opacity(isFullscreenAction ? 0.20 : 0.13)
+    }
+
+    private var strokeColor: Color {
+        isLightAppearance
+            ? Color.black.opacity(isFullscreenAction ? (isHovered ? 0.28 : 0.20) : (isHovered ? 0.20 : 0.14))
+            : Color.white.opacity(
+                isFullscreenAction
+                    ? (isHovered ? 0.30 : 0.22)
+                    : (isHovered ? 0.22 : 0.14)
+            )
+    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -533,24 +1186,43 @@ private struct ActionTileButton: View {
                     .tracking(0.8)
                     .lineLimit(2)
                     .minimumScaleFactor(0.82)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(foregroundPrimary)
 
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 110, maxHeight: 110, alignment: .topLeading)
             .padding(14)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .chromaGlassTileBackground(in: shape, isEmphasized: isFullscreenAction)
+        .contentShape(shape)
+        .buttonStyle(
+            ChromaActionTileButtonStyle(
+                isHovered: isHovered,
+                enableDesktopHover: usesDesktopHoverAffordance
+            )
+        )
+        .chromaGlassTileBackground(in: shape, isEmphasized: isFullscreenAction, isLightAppearance: isLightAppearance)
         .overlay {
             shape
-                .stroke(Color.white.opacity(isFullscreenAction ? 0.22 : 0.14), lineWidth: 1)
+                .stroke(strokeColor, lineWidth: 1)
         }
-        .shadow(color: .black.opacity(isFullscreenAction ? 0.26 : 0.16), radius: isFullscreenAction ? 18 : 12, x: 0, y: 6)
+        .shadow(
+            color: (isLightAppearance ? Color.white : Color.black).opacity(isFullscreenAction ? (isHovered ? 0.34 : 0.26) : (isHovered ? 0.24 : 0.16)),
+            radius: isFullscreenAction ? (isHovered ? 22 : 18) : (isHovered ? 16 : 12),
+            x: 0,
+            y: 6
+        )
         .onAppear {
             guard !reduceMotion else { return }
             symbolEffectToken = UUID()
         }
+#if targetEnvironment(macCatalyst)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+#endif
     }
 
     @ViewBuilder
@@ -558,9 +1230,9 @@ private struct ActionTileButton: View {
         let icon = Image(systemName: systemImage)
             .font(.system(size: 24, weight: .semibold))
             .symbolRenderingMode(.palette)
-            .foregroundStyle(.white, Color.white.opacity(isFullscreenAction ? 0.95 : 0.70))
+            .foregroundStyle(foregroundPrimary, foregroundSecondary)
             .padding(10)
-            .background(Color.white.opacity(isFullscreenAction ? 0.20 : 0.13), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(iconBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
         if reduceMotion {
             icon
@@ -572,281 +1244,459 @@ private struct ActionTileButton: View {
     }
 }
 
+private struct ChromaActionTileButtonStyle: ButtonStyle {
+    let isHovered: Bool
+    let enableDesktopHover: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : (enableDesktopHover && isHovered ? 1.01 : 1.0))
+            .brightness(configuration.isPressed ? -0.04 : (enableDesktopHover && isHovered ? 0.015 : 0))
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 private struct ActionMasterTile: View {
     @ObservedObject var sessionViewModel: SessionViewModel
-    let modeAction: (title: String, systemImage: String, action: () -> Void)?
-    let openSettings: () -> Void
-    let savePreset: () -> Void
+    let isLightAppearance: Bool
+    let savePreset: () -> Preset?
     let noteInteraction: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expandedPane: ActionPane = .liveControls
-    @State private var transientPane: ActionPane?
+    @State private var selectedControlID: String?
+    @State private var isSavePresetSelected = false
+    @State private var lastSavedPresetName: String?
 
-    private enum ActionPane: String, Identifiable {
-        case liveControls
-        case modeAction
-        case savePreset
-        case settings
+    private let iconTrackSpacing: CGFloat = 10
+    private let tileBodyHeight: CGFloat = 110
 
-        var id: String { rawValue }
+    private var foregroundPrimary: Color {
+        isLightAppearance ? Color.black.opacity(0.90) : Color.white
+    }
+
+    private var foregroundSecondary: Color {
+        isLightAppearance ? Color.black.opacity(0.70) : Color.white.opacity(0.72)
+    }
+
+    private var chipFill: Color {
+        isLightAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.12)
+    }
+
+    private var chipStroke: Color {
+        isLightAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.08)
+    }
+
+    private var liveControlDescriptors: [ParameterDescriptor] {
+        sessionViewModel.primarySurfaceControlDescriptors
     }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                paneButton(
-                    for: .liveControls,
-                    title: "Live Controls",
-                    systemImage: "slider.horizontal.3"
-                )
-
-                if let modeAction {
-                    paneButton(
-                        for: .modeAction,
-                        title: modeAction.title,
-                        systemImage: modeAction.systemImage
-                    )
-                }
-
-                paneButton(
-                    for: .savePreset,
-                    title: "Save Preset",
-                    systemImage: "square.and.arrow.down"
-                )
-
-                paneButton(
-                    for: .settings,
-                    title: "Settings",
-                    systemImage: "gearshape"
-                )
-
-                Spacer(minLength: 0)
+        ZStack {
+            if isSavePresetSelected {
+                expandedSavePresetRow
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else if let descriptor = selectedControlDescriptor {
+                expandedControlRow(for: descriptor)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else {
+                iconDeckPane
+                    .transition(.opacity)
             }
-
-            paneContent
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: tileBodyHeight, maxHeight: tileBodyHeight, alignment: .center)
+        .animation(.easeInOut(duration: 0.2), value: selectedControlID)
+        .animation(.easeInOut(duration: 0.2), value: isSavePresetSelected)
         .padding(14)
-        .chromaGlassTileBackground(in: shape, isEmphasized: false)
+        .chromaGlassTileBackground(in: shape, isEmphasized: false, isLightAppearance: isLightAppearance)
         .overlay {
             shape
-                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                .stroke(isLightAppearance ? Color.black.opacity(0.14) : Color.white.opacity(0.14), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
+        .frame(maxWidth: .infinity, minHeight: tileBodyHeight + 28, maxHeight: tileBodyHeight + 28, alignment: .topLeading)
+        .shadow(color: (isLightAppearance ? Color.white : Color.black).opacity(0.18), radius: 14, x: 0, y: 6)
+        .onChange(of: liveControlDescriptors.map(\.id)) { _, ids in
+            if let selectedControlID, !ids.contains(selectedControlID) {
+                self.selectedControlID = nil
+            }
+        }
     }
 
-    private func paneButton(for pane: ActionPane, title: String, systemImage: String) -> some View {
-        let isExpanded = expandedPane == pane
-        let isTransient = transientPane == pane
-        let width: CGFloat = isTransient ? 152 : 44
+    private var selectedControlDescriptor: ParameterDescriptor? {
+        guard let selectedControlID else { return nil }
+        return liveControlDescriptors.first(where: { $0.id == selectedControlID })
+    }
 
-        return Button {
-            selectPane(pane)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, .white.opacity(0.70))
-                    .frame(width: 18, height: 18)
-
-                if isTransient {
-                    Text(title.uppercased())
-                        .font(ChromaTypography.overline)
-                        .tracking(1.0)
-                        .foregroundStyle(.white.opacity(0.95))
-                        .lineLimit(1)
-                }
+    private var iconDeckPane: some View {
+        HStack(spacing: iconTrackSpacing) {
+            ForEach(liveControlDescriptors) { descriptor in
+                controlIconButton(descriptor)
+                    .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, isTransient ? 12 : 0)
-            .frame(width: width, height: 40, alignment: .center)
+            savePresetIconButton
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, iconTrackSpacing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func controlIconButton(_ descriptor: ParameterDescriptor) -> some View {
+        Button {
+            selectControl(descriptor.id)
+        } label: {
+            Image(systemName: iconName(for: descriptor))
+                .font(.system(size: 18, weight: .semibold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(foregroundPrimary, foregroundSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .center)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(isExpanded ? 0.24 : 0.12))
+                    .fill(chipFill)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(isExpanded ? 0.24 : 0.08), lineWidth: 1)
+                    .stroke(chipStroke, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
-        .scaleEffect(isTransient ? 1.04 : 1.0)
     }
 
-    private func selectPane(_ pane: ActionPane) {
+    private var savePresetIconButton: some View {
+        Button {
+            selectSavePreset()
+        } label: {
+            Image(systemName: "arrow.down.to.line")
+                .font(.system(size: 18, weight: .semibold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(foregroundPrimary, foregroundSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .center)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(chipFill)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(chipStroke, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectControl(_ descriptorID: String) {
         noteInteraction()
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-            expandedPane = pane
-            transientPane = pane
-        }
-
-        guard !reduceMotion else {
-            transientPane = nil
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-            withAnimation(.easeOut(duration: 0.2)) {
-                if transientPane == pane {
-                    transientPane = nil
-                }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            if selectedControlID == descriptorID, !isSavePresetSelected {
+                selectedControlID = nil
+            } else {
+                selectedControlID = descriptorID
+                isSavePresetSelected = false
             }
         }
     }
 
-    @ViewBuilder
-    private var paneContent: some View {
-        switch expandedPane {
-        case .liveControls:
-            liveControlsPane
-        case .modeAction:
-            modeActionPane
-        case .savePreset:
-            savePresetPane
-        case .settings:
-            settingsPane
+    private func selectSavePreset() {
+        noteInteraction()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            if isSavePresetSelected {
+                isSavePresetSelected = false
+            } else {
+                selectedControlID = nil
+                isSavePresetSelected = true
+            }
         }
     }
 
-    private var liveControlsPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("LIVE CONTROLS")
-                    .font(ChromaTypography.overline)
-                    .tracking(1.4)
-                    .foregroundStyle(.white.opacity(0.72))
+    private func expandedControlRow(for descriptor: ParameterDescriptor) -> some View {
+        HStack(spacing: iconTrackSpacing) {
+            Button {
+                selectControl(descriptor.id)
+            } label: {
+                Image(systemName: iconName(for: descriptor))
+                    .font(.system(size: 18, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(foregroundPrimary, foregroundSecondary)
+                    .frame(width: 52, height: 44, alignment: .center)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(isLightAppearance ? Color.black.opacity(0.16) : Color.white.opacity(0.22))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(isLightAppearance ? Color.black.opacity(0.18) : Color.white.opacity(0.18), lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
 
-                ForEach(sessionViewModel.primarySurfaceControlDescriptors) { descriptor in
-                    SurfaceSliderRow(
+            VStack(alignment: .leading, spacing: 5) {
+                switch descriptor.controlStyle {
+                case .slider:
+                    if descriptor.id == "mode.colorShift.excitementMode" {
+                        let modeIndex = min(max(Int((sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0).rounded()), 0), 2)
+                        HStack(spacing: 8) {
+                            Text(descriptor.title.uppercased())
+                                .font(ChromaTypography.overline)
+                                .tracking(1.1)
+                                .lineLimit(1)
+                                .foregroundStyle(foregroundPrimary.opacity(0.80))
+                            Spacer(minLength: 6)
+                            Text(colorShiftExcitementModeLabel(for: modeIndex).uppercased())
+                                .font(ChromaTypography.metric.monospacedDigit())
+                                .foregroundStyle(foregroundSecondary)
+                        }
+
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: {
+                                    min(max(Int((sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0).rounded()), 0), 2)
+                                },
+                                set: { newValue in
+                                    noteInteraction()
+                                    sessionViewModel.updateParameter(descriptor, value: .scalar(Double(newValue)))
+                                }
+                            )
+                        ) {
+                            Text("Spectral").tag(0)
+                            Text("Temporal").tag(1)
+                            Text("Pitch").tag(2)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    } else {
+                        HStack(spacing: 8) {
+                            Text(descriptor.title.uppercased())
+                                .font(ChromaTypography.overline)
+                                .tracking(1.1)
+                                .lineLimit(1)
+                                .foregroundStyle(foregroundPrimary.opacity(0.80))
+
+                            Spacer(minLength: 6)
+
+                            Text(String(format: "%.2f", sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0))
+                                .font(ChromaTypography.metric.monospacedDigit())
+                                .foregroundStyle(foregroundSecondary)
+                        }
+
+                        Slider(
+                            value: Binding(
+                                get: { sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0 },
+                                set: { newValue in
+                                    noteInteraction()
+                                    sessionViewModel.updateParameter(descriptor, value: .scalar(newValue))
+                                }
+                            ),
+                            in: (descriptor.minimumValue ?? 0) ... (descriptor.maximumValue ?? 1),
+                            onEditingChanged: { _ in noteInteraction() }
+                        )
+                        .tint(isLightAppearance ? .black : .white)
+                    }
+                case .toggle:
+                    Toggle(isOn: Binding(
+                        get: { sessionViewModel.parameterValue(for: descriptor).toggleValue ?? false },
+                        set: { isOn in
+                            noteInteraction()
+                            sessionViewModel.updateParameter(descriptor, value: .toggle(isOn))
+                        }
+                    )) {
+                        Text(descriptor.title.uppercased())
+                            .font(ChromaTypography.overline)
+                            .tracking(1.1)
+                            .lineLimit(1)
+                            .foregroundStyle(foregroundPrimary.opacity(0.80))
+                    }
+                    .tint(isLightAppearance ? .black : .white)
+                case .hueRange:
+                    let value = sessionViewModel.parameterValue(for: descriptor).hueRangeValue ?? (min: 0.13, max: 0.87, outside: false)
+                    HueRangeEditorRow(
                         descriptor: descriptor,
-                        value: sessionViewModel.parameterValue(for: descriptor).scalarValue ?? 0,
-                        noteInteraction: noteInteraction,
-                        onChange: { newValue in
-                            sessionViewModel.updateParameter(descriptor, value: .scalar(newValue))
+                        minValue: value.min,
+                        maxValue: value.max,
+                        outside: value.outside,
+                        hueShift: sessionViewModel.colorShiftHueCenterShift,
+                        trackHeight: 18,
+                        showsModePicker: true,
+                        onChange: { minValue, maxValue, outside in
+                            noteInteraction()
+                            sessionViewModel.updateParameter(
+                                descriptor,
+                                value: .hueRange(min: minValue, max: maxValue, outside: outside)
+                            )
+                        },
+                        onShift: { delta in
+                            noteInteraction()
+                            sessionViewModel.adjustColorShiftHueCenter(by: delta)
                         }
                     )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 150, maxHeight: 210)
+        .padding(.horizontal, iconTrackSpacing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    @ViewBuilder
-    private var modeActionPane: some View {
-        if let modeAction {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("MODE ACTION")
-                    .font(ChromaTypography.overline)
-                    .tracking(1.4)
-                    .foregroundStyle(.white.opacity(0.72))
-
-                Button {
-                    noteInteraction()
-                    modeAction.action()
-                } label: {
-                    Label(modeAction.title.uppercased(), systemImage: modeAction.systemImage)
-                        .font(ChromaTypography.action)
-                        .tracking(0.8)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(.regularMaterial, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("MODE ACTION")
-                    .font(ChromaTypography.overline)
-                    .tracking(1.4)
-                    .foregroundStyle(.white.opacity(0.72))
-                Text("No mode-specific action is available for the current mode.")
-                    .font(ChromaTypography.bodySecondary)
-                    .foregroundStyle(.white.opacity(0.76))
-            }
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        }
-    }
-
-    private var savePresetPane: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("SAVE PRESET")
-                .font(ChromaTypography.overline)
-                .tracking(1.4)
-                .foregroundStyle(.white.opacity(0.72))
+    private var expandedSavePresetRow: some View {
+        HStack(spacing: iconTrackSpacing) {
             Button {
-                noteInteraction()
-                savePreset()
+                selectSavePreset()
             } label: {
-                Label("SAVE PRESET (SOON)", systemImage: "square.and.arrow.down")
-                    .font(ChromaTypography.action)
-                    .tracking(0.8)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                Image(systemName: "arrow.down.to.line")
+                    .font(.system(size: 18, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(foregroundPrimary, foregroundSecondary)
+                    .frame(width: 52, height: 44, alignment: .center)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(isLightAppearance ? Color.black.opacity(0.16) : Color.white.opacity(0.22))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(isLightAppearance ? Color.black.opacity(0.18) : Color.white.opacity(0.18), lineWidth: 1)
+                    }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .background(.regularMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            }
 
-            Text("Preset capture tile is wired as a placeholder and will be implemented in a follow-up task.")
-                .font(ChromaTypography.bodySecondary)
-                .foregroundStyle(.white.opacity(0.76))
-        }
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-    }
-
-    private var settingsPane: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("SETTINGS")
-                .font(ChromaTypography.overline)
-                .tracking(1.4)
-                .foregroundStyle(.white.opacity(0.72))
             Button {
                 noteInteraction()
-                openSettings()
+                if let preset = savePreset() {
+                    lastSavedPresetName = preset.name
+                }
             } label: {
-                Label("OPEN SETTINGS", systemImage: "gearshape")
-                    .font(ChromaTypography.action)
-                    .tracking(0.8)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                VStack(spacing: 2) {
+                    Text("QUICK SAVE NEW PRESET")
+                        .font(ChromaTypography.overline)
+                        .tracking(1.1)
+                        .lineLimit(1)
+                    if let lastSavedPresetName {
+                        Text("Saved \(lastSavedPresetName)")
+                            .font(ChromaTypography.metric)
+                            .foregroundStyle(foregroundSecondary)
+                            .lineLimit(1)
+                    } else {
+                        Text("Rename from Presets")
+                            .font(ChromaTypography.metric)
+                            .foregroundStyle(foregroundSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .background(.regularMaterial, in: Capsule())
+            .foregroundStyle(foregroundPrimary)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isLightAppearance ? Color.black.opacity(0.12) : Color.white.opacity(0.14))
+            )
             .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isLightAppearance ? Color.black.opacity(0.12) : Color.white.opacity(0.10), lineWidth: 1)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .padding(.horizontal, iconTrackSpacing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func iconName(for descriptor: ParameterDescriptor) -> String {
+        switch descriptor.id {
+        case "response.inputGain":
+            return "mic.fill"
+        case "response.smoothing":
+            return "waveform.path.ecg"
+        case "output.blackFloor":
+            return "moon.stars.fill"
+        case "output.noImageInSilence":
+            return "speaker.slash.fill"
+        case "mode.colorShift.hueResponse":
+            return "dial.medium.fill"
+        case "mode.colorShift.hueRange":
+            return "circle.lefthalf.filled"
+        case "mode.colorShift.excitementMode":
+            return "arrow.left.and.right.circle.fill"
+        case "mode.prismField.facetDensity":
+            return "arrow.triangle.2.circlepath"
+        case "mode.prismField.dispersion":
+            return "sparkles"
+        case "mode.tunnelCels.shapeScale":
+            return "square.resize"
+        case "mode.tunnelCels.depthSpeed":
+            return "arrow.forward.to.line"
+        case "mode.tunnelCels.releaseTail":
+            return "waveform.path"
+        case "mode.fractalCaustics.detail", "mode.riemannCorridor.detail":
+            return "scope"
+        case "mode.fractalCaustics.flowRate", "mode.riemannCorridor.flowRate":
+            return "wind"
+        case "mode.fractalCaustics.attackBloom", "mode.riemannCorridor.zeroBloom":
+            return "bolt.fill"
+        default:
+            return "slider.horizontal.3"
+        }
+    }
+
+}
+
+private struct AppearanceInkTransitionOverlay: View {
+    let color: Color
+    let progress: CGFloat
+    let opacity: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            let radius = max(proxy.size.width, proxy.size.height) * 0.95
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            color.opacity(0.52),
+                            color.opacity(0.16),
+                            color.opacity(0.00),
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: radius
+                    )
+                )
+                .frame(width: radius * 2, height: radius * 2)
+                .scaleEffect(progress)
+                .opacity(opacity)
+                .position(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
+        }
     }
 }
 
 private extension View {
     @ViewBuilder
-    func chromaGlassTileBackground<S: Shape>(in shape: S, isEmphasized: Bool) -> some View {
-        let opacity = isEmphasized ? 0.16 : 0.10
+    func chromaGlassTileBackground<S: Shape>(in shape: S, isEmphasized: Bool, isLightAppearance: Bool) -> some View {
+        let baseOpacity = isEmphasized ? 0.16 : 0.10
         if #available(iOS 26.0, macCatalyst 26.0, *) {
             self
-                .background(Color.white.opacity(opacity), in: shape)
-                .glassEffect(.regular.tint(Color.white.opacity(opacity)).interactive(), in: shape)
+                .background(
+                    (isLightAppearance ? Color.white.opacity(baseOpacity + 0.24) : Color.white.opacity(baseOpacity)),
+                    in: shape
+                )
+                .glassEffect(
+                    .regular
+                        .tint(
+                            isLightAppearance
+                                ? Color.black.opacity(isEmphasized ? 0.09 : 0.06)
+                                : Color.white.opacity(baseOpacity)
+                        )
+                        .interactive(),
+                    in: shape
+                )
         } else {
             self
-                .background(.regularMaterial, in: shape)
+                .background(
+                    isLightAppearance
+                        ? AnyShapeStyle(.ultraThinMaterial)
+                        : AnyShapeStyle(.regularMaterial),
+                    in: shape
+                )
         }
+    }
+}
+
+private extension CGFloat {
+    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

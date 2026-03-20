@@ -6,6 +6,8 @@
 	<string>Chroma uses the front camera to seed mirror feedback visuals in Color Shift mode.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Chroma uses microphone input to drive live visual response.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Chroma saves completed exports to your Photos library when you choose Save to Photos.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Oswald-Regular.ttf</string>

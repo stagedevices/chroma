@@ -433,26 +433,38 @@ fragment float4 renderer_feedback_contour_fragment(
     texture2d<float> cameraTexture [[texture(0)]],
     sampler linearSampler [[sampler(0)]]
 ) {
+    if (uniforms.colorShiftBlackout > 0u) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
     float2 uv = in.uv;
-    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
+    float2 point = centeredPoint(uv, uniforms.resolution, uniforms.centerOffset);
+    float huePhase = fract(uniforms.colorShiftHue) * (kPi * 2.0);
+    float t = uniforms.time * (0.24 + (uniforms.motion * 1.8));
+    float low = clamp(uniforms.lowBandEnergy, 0.0, 1.0);
+    float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
+    float high = clamp(uniforms.highBandEnergy, 0.0, 1.0);
 
-    float3 center = cameraTexture.sample(linearSampler, uv).rgb;
-    float3 left = cameraTexture.sample(linearSampler, uv + float2(-texel.x, 0)).rgb;
-    float3 right = cameraTexture.sample(linearSampler, uv + float2(texel.x, 0)).rgb;
-    float3 up = cameraTexture.sample(linearSampler, uv + float2(0, -texel.y)).rgb;
-    float3 down = cameraTexture.sample(linearSampler, uv + float2(0, texel.y)).rgb;
+    float3 cameraCenter = cameraTexture.sample(linearSampler, float2(0.5, 0.5)).rgb;
+    float cameraLuma = dot(cameraCenter, float3(0.299, 0.587, 0.114));
 
-    float lumaCenter = dot(center, float3(0.299, 0.587, 0.114));
-    float lumaLeft = dot(left, float3(0.299, 0.587, 0.114));
-    float lumaRight = dot(right, float3(0.299, 0.587, 0.114));
-    float lumaUp = dot(up, float3(0.299, 0.587, 0.114));
-    float lumaDown = dot(down, float3(0.299, 0.587, 0.114));
+    float2 centerA = float2(sin(t * 0.71 + huePhase), cos(t * 0.52 - huePhase)) * (0.25 + low * 0.20);
+    float2 centerB = float2(cos(t * 0.44 - huePhase * 0.5), sin(t * 0.84 + huePhase * 0.3)) * (0.32 + mid * 0.18);
+    float2 centerC = float2(sin(-t * 0.93 + huePhase * 0.2), cos(t * 0.63 + huePhase * 0.8)) * (0.39 + high * 0.16);
 
-    float gx = lumaRight - lumaLeft;
-    float gy = lumaDown - lumaUp;
-    float mag = sqrt((gx * gx) + (gy * gy));
-    float contour = smoothstep(0.11, 0.33, mag + (lumaCenter * 0.04));
-    return float4(contour, contour, contour, 1.0);
+    float blobA = smoothstep(0.34, 0.02, length(point - centerA));
+    float blobB = smoothstep(0.28, 0.02, length(point - centerB));
+    float blobC = smoothstep(0.24, 0.02, length(point - centerC));
+    float blobs = clamp((blobA * 0.62) + (blobB * 0.58) + (blobC * 0.54), 0.0, 1.0);
+
+    float bandFreq = mix(4.0, 14.0, clamp(uniforms.scale, 0.0, 1.0));
+    float bandA = 0.5 + (0.5 * sin((point.x * bandFreq) + (point.y * bandFreq * 0.72) + (t * 1.6) + huePhase));
+    float bandB = 0.5 + (0.5 * sin((length(point) * (8.0 + uniforms.diffusion * 14.0)) - (t * 1.3) + huePhase * 0.42));
+    float banding = mix(bandA, bandB, 0.44 + (high * 0.28));
+
+    float seed = max(blobs, banding * (0.30 + uniforms.diffusion * 0.42));
+    seed = clamp(seed + (uniforms.attackStrength * 0.12) + (cameraLuma * 0.08), 0.0, 1.0);
+    return float4(seed, seed, seed, 1.0);
 }
 
 fragment float4 renderer_feedback_evolve_fragment(
@@ -463,17 +475,27 @@ fragment float4 renderer_feedback_evolve_fragment(
     sampler linearSampler [[sampler(0)]]
 ) {
     float2 centered = in.uv - 0.5;
-    float c = cos(0.0018);
-    float s = sin(0.0018);
+    float spin = 0.0010 + (uniforms.attackStrength * 0.0034);
+    float c = cos(spin);
+    float s = sin(spin);
     float2 rotated = float2((centered.x * c) - (centered.y * s), (centered.x * s) + (centered.y * c));
-    float2 warpedUV = (rotated / 1.012) + 0.5;
+    float zoom = 1.005 + (uniforms.motion * 0.014);
+    float2 warpedUV = (rotated / zoom) + 0.5;
 
+    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
     float history = historyTexture.sample(linearSampler, warpedUV).r;
-    float contour = contourTexture.sample(linearSampler, in.uv).r;
+    float blur = 0.0;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(texel.x, 0.0)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(-texel.x, 0.0)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(0.0, texel.y)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(0.0, -texel.y)).r;
+    blur *= 0.25;
 
-    float decay = 0.93;
-    float injection = contour * (0.42 + (uniforms.attackStrength * 0.20));
-    float evolved = max(history * decay, injection);
+    float contour = contourTexture.sample(linearSampler, in.uv).r;
+    float decay = 0.90 + ((1.0 - uniforms.blackFloor) * 0.06);
+    float injection = contour * (0.40 + (uniforms.attackStrength * 0.35));
+    float evolved = max(mix(history, blur, 0.24), injection);
+    evolved = clamp((evolved * decay) + (contour * 0.06), 0.0, 1.0);
     return float4(evolved, evolved, evolved, 1.0);
 }
 
@@ -487,12 +509,36 @@ fragment float4 renderer_feedback_present_fragment(
         return float4(0.0, 0.0, 0.0, 1.0);
     }
 
-    float field = feedbackTexture.sample(linearSampler, in.uv).r;
+    float2 uv = in.uv;
+    float field = feedbackTexture.sample(linearSampler, uv).r;
+    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
+    float gradX = feedbackTexture.sample(linearSampler, uv + float2(texel.x, 0.0)).r
+        - feedbackTexture.sample(linearSampler, uv + float2(-texel.x, 0.0)).r;
+    float gradY = feedbackTexture.sample(linearSampler, uv + float2(0.0, texel.y)).r
+        - feedbackTexture.sample(linearSampler, uv + float2(0.0, -texel.y)).r;
+    float gradient = min(length(float2(gradX, gradY)) * 3.5, 1.0);
+
     float hue = fract(uniforms.colorShiftHue);
     float saturation = clamp(uniforms.colorShiftSaturation, 0.0, 1.0);
-    float3 tint = hsvToRgb(float3(hue, saturation, 0.90));
-    float value = smoothstep(0.03, 0.95, field);
-    return float4(tint * value, 1.0);
+    float hueB = fract(hue + 0.08 + (uniforms.midBandEnergy * 0.12) - (uniforms.lowBandEnergy * 0.05));
+    float hueC = fract(hue - 0.09 + (uniforms.highBandEnergy * 0.15));
+
+    float3 colorA = hsvToRgb(float3(hue, saturation, 0.92));
+    float3 colorB = hsvToRgb(float3(hueB, clamp(saturation * 0.92, 0.0, 1.0), 0.96));
+    float3 colorC = hsvToRgb(float3(hueC, clamp(saturation * 0.86, 0.0, 1.0), 0.88));
+
+    float blend = smoothstep(0.12, 0.92, field);
+    float ribbon = 0.5 + (0.5 * sin((field * (12.0 + uniforms.scale * 20.0)) + (uniforms.time * (0.6 + uniforms.motion * 2.0))));
+    float3 color = mix(colorA, colorB, blend);
+    color = mix(color, colorC, ribbon * (0.22 + uniforms.diffusion * 0.38));
+
+    float edgeGlow = smoothstep(0.08, 0.35, gradient) * (0.14 + uniforms.attackStrength * 0.16);
+    color += edgeGlow;
+
+    float value = smoothstep(0.04, 0.98, field);
+    color *= mix(0.28, 1.0, value);
+    color = max(color - (uniforms.blackFloor * 0.18), float3(0.0));
+    return float4(color, 1.0);
 }
 
 fragment float4 renderer_spectral_ring_field_fragment(
@@ -950,8 +996,8 @@ fragment float4 renderer_tunnel_field_fragment(
     float wallMask = smoothstep(1.34, 0.10, squareRadius);
     float centerWell = exp(-pow(centerRadius * 9.0, 2.0));
 
-    float energy = ((ringShell * 0.46) + (latticeLines * 0.66) + (fog * 0.20)) * wallMask;
-    energy *= mix(0.74, 1.20, flow);
+    float energy = ((ringShell * 0.24) + (latticeLines * 0.30) + (fog * 0.10)) * wallMask;
+    energy *= mix(0.62, 0.94, flow);
     energy = max(0.0, energy - (centerWell * 0.18));
 
     float hue = fract((latticeUV.x * 0.07) + (latticeUV.y * 0.05) + (depthPhase * 0.03));
@@ -959,8 +1005,8 @@ fragment float4 renderer_tunnel_field_fragment(
     float3 baseA = float3(0.004, 0.008, 0.016);
     float3 baseB = float3(0.016, 0.028, 0.050);
     float3 base = mix(baseA, baseB, fog);
-    float3 color = (base * (0.40 + (0.60 * fog))) + (prism * energy * 0.62);
-    color += float3(0.0015, 0.0026, 0.0042) * (0.20 + (uniforms.featureAmplitude * 0.80));
+    float3 color = (base * (0.26 + (0.42 * fog))) + (prism * energy * 0.34);
+    color += float3(0.0010, 0.0018, 0.0030) * (0.12 + (uniforms.featureAmplitude * 0.58));
     return float4(color, max(energy, 0.0001));
 }
 
@@ -992,7 +1038,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
         float perspective = 1.0 / (0.35 + depth);
         float2 projected = lane * perspective;
-        float size = scale * perspective * mix(0.12, 0.34, uniforms.tunnelShapeScale);
+        float size = scale * perspective * mix(0.50, 1.20, uniforms.tunnelShapeScale);
         float2 local = (point - projected) / max(size, 0.0001);
 
         float axisAngle = atan2(shape.axisDecaySustainRelease.y, shape.axisDecaySustainRelease.x);
@@ -1004,25 +1050,26 @@ fragment float4 renderer_tunnel_shapes_fragment(
         float variant = shape.forwardHueVariantSeed.z;
         float distance;
         if (variant < 0.5) {
-            distance = sdBox2D(rotated, float2(0.48, 0.30));
+            distance = sdBox2D(rotated, float2(0.62, 0.38));
         } else if (variant < 1.5) {
-            distance = sdDiamond2D(rotated, float2(0.74, 0.74));
+            distance = sdDiamond2D(rotated, float2(0.88, 0.88));
         } else {
-            distance = sdSlab2D(rotated, 0.52, 0.22);
+            distance = sdSlab2D(rotated, 0.68, 0.28);
         }
 
-        float edgeGlow = exp(-pow(max(distance, 0.0) * 5.2, 2.0));
-        float core = smoothstep(0.16, -0.26, distance) * 0.56;
-        float outline = smoothstep(0.085, 0.0, abs(distance)) * 0.72;
+        float edgeGlow = exp(-pow(max(distance, 0.0) * 2.6, 2.0));
+        float core = smoothstep(0.34, -0.46, distance) * 1.05;
+        float outline = smoothstep(0.24, 0.0, abs(distance)) * 1.30;
         float releaseMix = shape.axisDecaySustainRelease.w;
         float releaseDamp = mix(1.0, 0.20, releaseMix);
-        float depthFade = smoothstep(7.2, 0.25, depth);
+        float depthFade = smoothstep(9.0, 0.08, depth);
         float localEnergy = (edgeGlow + core + outline) * envelope * releaseDamp * depthFade;
-        localEnergy *= (0.58 + (uniforms.attackStrength * 0.42));
+        localEnergy *= (1.25 + (uniforms.attackStrength * 0.95));
 
         float hue = fract(shape.forwardHueVariantSeed.y + (shape.forwardHueVariantSeed.x * 0.03) + (local.x * 0.06));
         float3 shapeColor = spectralPalette(hue);
-        color += shapeColor * localEnergy;
+        float3 energizedColor = mix(shapeColor, float3(1.0), 0.26);
+        color += energizedColor * localEnergy;
         energy += localEnergy;
     }
 
@@ -1073,7 +1120,7 @@ fragment float4 renderer_tunnel_composite_fragment(
         split += rgb * (1.0 - t);
     }
 
-    float3 composed = (field * 0.58) + (shapes * 1.15) + (trails * 0.78) + (split * 0.52);
+    float3 composed = (field * 0.35) + (shapes * 2.55) + (trails * 1.35) + (split * 1.12);
     float ambientPhase = 0.5 + 0.5 * sin((uniforms.time * 0.30) + (point.x * 2.6) + (point.y * 2.1));
     float3 ambient = mix(float3(0.0012, 0.0018, 0.0030), float3(0.0065, 0.0105, 0.0140), ambientPhase);
     composed += ambient;

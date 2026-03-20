@@ -16,9 +16,16 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - sheet views including `FeedbackSetupSheet`
 - renderer host embedding view
 - fullscreen chrome-hide/reveal behavior
-- iOS tile-based top action deck (2-column tiles, medium-first sheet routing)
-- mode-style picker sheets for Tunnel `Variant` and Fractal/Mandelbrot `Palette`
+- iOS + Catalyst tile-based top action deck (2-column tiles)
+- iOS medium-first sheet routing, Catalyst adaptive popover/sheet routing
+- mode-style pickers for Tunnel `Variant` and Fractal/Mandelbrot `Palette` (sheet on iOS, popover on Catalyst)
 - iOS settings sheet as the home for live mode controls (persistent bottom sliders removed on iOS)
+- settings appearance tile toggles light/dark glass theme (`sun.max` / `moon.stars`) and triggers shared ink-transition rerender
+- custom hue-range editor row (dual handle + inside/outside) for Color Shift controls in both shell/settings control surfaces
+- bottom full-width action tile expansion for icon-first live controls, including Color Shift `Excitement Mode` segmented selection
+- mode-scoped preset browser and quick-save/inline-rename preset interactions
+- iOS export sheet flow with live capture controls (`Include Mic Audio`, start/stop, elapsed/status, share handoff)
+- iOS external-program window host wiring (device operator UI + clean external program feed)
 
 ### `Packages/ChromaDomain`
 - `ChromaSession`
@@ -27,10 +34,12 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - `VisualMorphState`
 - `ParameterDescriptor`
 - `ParameterValue`
+- `ParameterControlStyle` (including hue-range control style)
 - `ParameterGroup`
 - `Preset`
 - `DisplayTarget`
 - `OutputSessionState`
+  - includes persisted `glassAppearanceStyle` (`dark` / `light`) for shell + ambient background styling
 - `ExportProfile`
 - `DiagnosticsSnapshot`
 - `PerformanceSet`
@@ -64,6 +73,7 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 ### `Packages/ChromaRendering`
 - `RendererService`
 - `RenderCoordinator`
+- `RendererFrameCaptureSink` seam for export capture
 - `RendererSurfaceState`
 - `RendererControlState`
 - `RendererDiagnosticsSummary`
@@ -71,7 +81,7 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - headless test renderer implementation
 - Metal shader sources for:
   - `Color Shift` flat backfill
-  - Color Shift `Contour Flow` feedback passes (contour/evolve/present)
+  - Color Shift camera-color-driven feedback field (abstract banding/blob shapes; no camera-image passthrough)
   - `Prism Field`
   - `Tunnel Cels` (field/shapes/composite multipass)
   - `Fractal Caustics` (field/accents/composite multipass)
@@ -79,7 +89,9 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 
 ### `Packages/ChromaPresets`
 - `PresetService`
-- placeholder preset persistence implementation
+- `DiskPresetService` for local persisted presets
+  - startup mode-gap backfill from curated seed presets (one starter per missing mode)
+- placeholder preset persistence for tests and lightweight scaffolding
 
 ### `Packages/ChromaDiagnostics`
 - `DiagnosticsService`
@@ -87,11 +99,13 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 
 ### `Packages/ChromaRecorder`
 - `RecorderService`
-- placeholder export/recording implementation
+- `LiveRecorderService` (AVAssetWriter, optional mic track, cache output, bounded cleanup)
+- placeholder recorder implementation for tests/scaffolding
 
 ### `Packages/ChromaExternalDisplay`
 - `ExternalDisplayCoordinator`
-- placeholder display routing implementation
+- `LiveExternalDisplayCoordinator` for iOS screen connect/disconnect and selected-target reconciliation
+- placeholder coordinator for Catalyst/tests
 
 ### `Packages/ChromaSetlist`
 - `SetlistService`

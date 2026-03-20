@@ -41,6 +41,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var pitchConfidence: Double
     public var stablePitchClass: Int?
     public var stablePitchCents: Double
+    public var colorHueMin: Double
+    public var colorHueMax: Double
+    public var colorHueOutside: Bool
+    public var colorHueShift: Double
+    public var colorShiftExcitementMode: Double
     public var colorShiftSaturation: Double
     public var isAttack: Bool
     public var attackStrength: Double
@@ -81,6 +86,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         pitchConfidence: Double = 0,
         stablePitchClass: Int? = nil,
         stablePitchCents: Double = 0,
+        colorHueMin: Double = 0.13,
+        colorHueMax: Double = 0.87,
+        colorHueOutside: Bool = false,
+        colorHueShift: Double = 0.0,
+        colorShiftExcitementMode: Double = 0,
         colorShiftSaturation: Double = 0.84,
         isAttack: Bool = false,
         attackStrength: Double = 0,
@@ -120,6 +130,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.pitchConfidence = pitchConfidence
         self.stablePitchClass = stablePitchClass
         self.stablePitchCents = stablePitchCents
+        self.colorHueMin = colorHueMin
+        self.colorHueMax = colorHueMax
+        self.colorHueOutside = colorHueOutside
+        self.colorHueShift = colorHueShift
+        self.colorShiftExcitementMode = colorShiftExcitementMode
         self.colorShiftSaturation = colorShiftSaturation
         self.isAttack = isAttack
         self.attackStrength = attackStrength
@@ -162,6 +177,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             pitchConfidence: pitchConfidence.clamped(to: 0 ... 1),
             stablePitchClass: stablePitchClass.map { min(max($0, 0), 11) },
             stablePitchCents: stablePitchCents.clamped(to: -50 ... 50),
+            colorHueMin: colorHueMin.clamped(to: 0 ... 1),
+            colorHueMax: colorHueMax.clamped(to: 0 ... 1),
+            colorHueOutside: colorHueOutside,
+            colorHueShift: colorHueShift.clamped(to: 0 ... 1),
+            colorShiftExcitementMode: colorShiftExcitementMode.clamped(to: 0 ... 2),
             colorShiftSaturation: colorShiftSaturation.clamped(to: 0 ... 1),
             isAttack: isAttack,
             attackStrength: attackStrength.clamped(to: 0 ... 1),

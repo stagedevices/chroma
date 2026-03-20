@@ -44,8 +44,13 @@ Legacy/
 - sheet routing
 - app/session view models
 - dependency bootstrap
-- iOS action chrome: 2-column tile deck with medium-first sheet presentation
+- iOS + Catalyst action chrome: shared 2-column tile deck
+- iOS: medium-first sheet presentation for action flows
+- Catalyst: adaptive action presentation (tile-anchored popovers for short pickers, sheets for larger flows)
 - iOS live controls moved into Settings sheet sections (Catalyst keeps persistent bottom panel)
+- preset browser is mode-scoped (active mode only) with apply/rename/delete flows
+- iOS live-controls save tile supports quick-save + inline rename for presets
+- appearance toggle is session-driven (`dark`/`light` glass) and re-renders shell + settings + canvas with an ink transition token
 
 ### Domain models
 `Packages/ChromaDomain`
@@ -54,6 +59,7 @@ Legacy/
 - parameters
 - presets
 - output/display models
+  - output state includes glass appearance style so chrome treatment and idle ambient color are persisted with session state
 - diagnostics summaries
 - export profiles
 - sets/cues
@@ -64,9 +70,14 @@ Legacy/
 - `Packages/ChromaAnalysis`: analysis seams
 - `Packages/ChromaRendering`: renderer and render coordination seams
 - `Packages/ChromaPresets`: preset persistence seam
+  - disk-backed preset storage for runtime, placeholder service for tests
+  - mode starter backfill adds one curated seed preset when an entire mode has no presets in local storage
 - `Packages/ChromaDiagnostics`: diagnostics sampling/reporting seam
 - `Packages/ChromaRecorder`: recorder/export seam
+  - `LiveRecorderService` captures renderer program-feed frames via renderer frame sink + optional mic audio from live audio samples
+  - AVAssetWriter-based lifecycle (`starting`/`recording`/`finalizing`/`completed`/`failed`) with cache-first output and bounded cleanup
 - `Packages/ChromaExternalDisplay`: display routing seam
+  - `LiveExternalDisplayCoordinator` publishes live target availability and selected-target reconciliation from iOS screen lifecycle events
 - `Packages/ChromaSetlist`: setlist/cue seam
 - `CameraFeedbackService` lives alongside audio services and provides front-camera frame feed for Color Shift feedback mode
 
@@ -99,6 +110,7 @@ Current expectations:
 - SwiftUI views do not own the draw loop or Metal lifecycle
 - a headless renderer service exists for tests so the app host does not need to boot Metal under XCTest
 - renderer-facing state mapping remains in shared pure logic, not in SwiftUI views
+- renderer exposes a single frame-capture sink registration seam so export captures program feed directly from render output (never shell UI composition)
 
 ### Current mode rendering seam
 
@@ -111,12 +123,18 @@ The live mode contract is intentionally narrow:
 
 Color Shift behavior:
 - default output is pixel-uniform (no spatial gradients, spokes, shimmer, or vignette in this mode)
-- hue movement uses a hybrid lock+glide model: stable pitch class lock (12-TET/A440) + cents glide when confidence is high
+- hue movement uses a directional PWM model with bistable latching: hue oscillates from center toward a latched side (left/right) instead of free bipolar sweep
+- direction source is selectable via `mode.colorShift.excitementMode`:
+  - `Spectral` (low vs high dominance)
+  - `Temporal` (short/transient vs long/sustain cue)
+  - `Pitch` (up/down pitch motion; confidence-gated fallback to spectral weighting)
 - pitch extraction is analysis-side YIN primary with HPS fallback, then confidence gate + hysteresis/dwell stabilization before renderer mapping
 - when tonal confidence is low but live energy is present, Color Shift uses a slow spectral-balance fallback instead of free-running idle cycling
-- global response controls and mode controls (`hueResponse`, `hueRange`) shape follow speed, excursion width, and saturation responsiveness; hue holds in silence (no idle drift)
+- `hueRange` is a dual-point hue clamp value (`min`, `max`, `outside`) edited through a hue-spectrum track with inside/outside selection
+- Color Shift target hue is clamped to the selected arc/complement using ordered wrap-aware arc semantics and a fixed feathered boundary
+- global response controls and mode controls (`hueResponse`, `hueRange`, `excitementMode`) shape pulse rate, allowed hue excursion width, directional cue interpretation, and saturation responsiveness; hue holds in silence (no idle drift)
 - `No Image In Silence` forces black in silence; `Black Floor` is intentionally ignored in this mode
-- optional Feedback chip enables Contour Flow: front-camera-seeded recursive GPU feedback that fully replaces flat fill while active and stays tint-driven (never raw camera passthrough)
+- optional Feedback chip enables camera-color-driven abstract field rendering: front-camera frames are sampled for color, then used to drive procedural lava-lamp style banding/blobs (no camera-image passthrough)
 
 Prism Field behavior:
 - dedicated multi-pass Facet Caustics pipeline:
@@ -141,7 +159,7 @@ Tunnel Cels behavior:
 - silence policy mirrors stage composition rules: `No Image In Silence` can force hard black; otherwise tunnel remains dark-first via black-floor grading
 - variant selection (`Cel Cards`, `Prism Shards`, `Glyph Slabs`) is mode-scoped
 - on iOS, variant selection is presented via a medium-detent picker sheet from the top action tile
-- on Catalyst, variant selection remains chip-style cycling
+- on Catalyst, variant selection uses tile-anchored picker popovers
 
 Fractal Caustics behavior:
 - dedicated multi-pass Fractal Caustics pipeline:
@@ -152,7 +170,7 @@ Fractal Caustics behavior:
 - continuous modulation uses amplitude/bands as primary flow drivers and pitch lock fields for high-confidence micro-phase modulation
 - palette customization is mode-scoped and snaps `paletteVariant` to curated banks (`0...7`)
 - on iOS, palette selection is presented via a medium-detent picker sheet from the top action tile
-- on Catalyst, palette selection remains chip-style cycling
+- on Catalyst, palette selection uses tile-anchored picker popovers
 - `No Image In Silence` can force hard black in low-energy silence; otherwise Fractal stays dark-first via black-floor grading
 
 Mandelbrot behavior:
@@ -165,7 +183,7 @@ Mandelbrot behavior:
 - attack events can trigger deterministic minibrot point-of-interest handoffs (cooldown-gated) with bounded steering and zoom acceleration to avoid hard cuts
 - palette customization is mode-scoped and snaps `paletteVariant` to curated banks (`0...7`)
 - on iOS, palette selection is presented via a medium-detent picker sheet from the top action tile
-- on Catalyst, palette selection remains chip-style cycling
+- on Catalyst, palette selection uses tile-anchored picker popovers
 - Mandelbrot palette variants are style-distinct render families (`topology`, `boundaries`, `streams`, `particles`) rather than simple hue shifts
 - explicit phase/escape contour lines are derived from smooth-escape iteration structure to preserve readable boundary fans without seams
 - `No Image In Silence` can force hard black in low-energy silence; otherwise Mandelbrot remains visible with dark-first grading
@@ -173,7 +191,7 @@ Mandelbrot behavior:
 Renderer stability rules:
 - command-buffer error handling and timed fallback infrastructure remain in place
 - no draw-loop allocations are introduced in active mode rendering
-- feedback rendering uses fixed intermediate textures + ping-pong recursion to avoid per-frame buffer churn
+- feedback rendering uses a dedicated procedural field path seeded by camera color samples (shape-rich abstraction, never camera-image projection)
 - tunnel rendering uses fixed-size pooled events and quality tiers before hard fallback
 - fractal rendering uses fixed-size pooled pulses and quality tiers (orbit/trap samples + pulse count) before hard fallback
 - mandelbrot rendering uses fixed-size pooled accents and quality tiers (iteration budget + trap taps + accent count) before hard fallback
@@ -208,7 +226,8 @@ Task 008 pitch-reactive Color Shift extensions:
 Output remains first-class even in an iOS-first/Catalyst repository:
 - the operator shell and program output are separate concerns
 - display target selection is a domain concern, not view-local UI state
-- future external display routing should attach through `ExternalDisplayCoordinator` and `OutputSessionState`
+- iOS uses live target routing through `ExternalDisplayCoordinator`; selecting external creates a clean external program window while the device remains operator surface
+- Catalyst remains single-window output in this task scope while sharing the same target contracts
 
 ## Parameter architecture
 

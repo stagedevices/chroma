@@ -3,11 +3,22 @@ import Combine
 
 @MainActor
 public final class SessionViewModel: ObservableObject {
+    private static let colorShiftHueCenterTrimID = "mode.colorShift.hueCenterTrim"
+    private static let includeMicAudioDefaultsKey = "session.recorder.includeMicAudio"
+    private static let exportResolutionDefaultsKey = "session.export.resolutionPreset"
+    private static let exportFrameRateDefaultsKey = "session.export.frameRate"
+    private static let exportCodecDefaultsKey = "session.export.videoCodec"
+    private static let quickSaveTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
     @Published public private(set) var session: ChromaSession
     @Published public private(set) var availableModes: [VisualModeDescriptor]
     @Published public private(set) var presets: [Preset]
     @Published public private(set) var diagnosticsSnapshot: DiagnosticsSnapshot
-    @Published public private(set) var exportProfiles: [ExportProfile]
+    @Published public private(set) var supportedExportCodecs: Set<ExportVideoCodec>
     @Published public private(set) var performanceSets: [PerformanceSet]
     @Published public private(set) var latestAudioMeterFrame: AudioMeterFrame
     @Published public private(set) var latestAudioFeatureFrame: AudioFeatureFrame
@@ -17,6 +28,11 @@ public final class SessionViewModel: ObservableObject {
     @Published public private(set) var cameraFeedbackAuthorizationStatus: CameraFeedbackAuthorizationStatus
     @Published public private(set) var isColorFeedbackRunning: Bool
     @Published public private(set) var cameraFeedbackStatusMessage: String?
+    @Published public private(set) var isActivePresetModified: Bool
+    @Published public private(set) var recorderCaptureState: RecorderCaptureState
+    @Published public private(set) var recorderStatusMessage: String?
+    @Published public private(set) var appearanceTransitionToken: UUID
+    @Published public var includeMicAudioInExport: Bool
 
     public let parameterStore: ParameterStore
     public let audioInputService: AudioInputService
@@ -36,6 +52,8 @@ public final class SessionViewModel: ObservableObject {
     private var cancellables: Set<AnyCancellable>
     private var isAudioPipelineActive: Bool
     private var lastAudioPipelineError: String?
+    private var activePresetBaselineValues: [ScopedParameterValue]?
+    private var activePresetBaselineModeID: VisualModeID?
 
     public init(
         session: ChromaSession,
@@ -54,6 +72,7 @@ public final class SessionViewModel: ObservableObject {
         presets: [Preset],
         performanceSets: [PerformanceSet]
     ) {
+        let restoredExportSettings = Self.loadExportCaptureSettings(defaultValue: session.exportCaptureSettings)
         self.session = session
         self.availableModes = ParameterCatalog.modes
         self.parameterStore = parameterStore
@@ -69,7 +88,7 @@ public final class SessionViewModel: ObservableObject {
         self.externalDisplayCoordinator = externalDisplayCoordinator
         self.setlistService = setlistService
         self.presets = presets
-        self.exportProfiles = recorderService.availableExportProfiles
+        self.supportedExportCodecs = recorderService.supportedVideoCodecs
         self.performanceSets = performanceSets
         self.latestAudioMeterFrame = audioInputService.latestMeterFrame
         self.latestAudioFeatureFrame = audioAnalysisService.latestFrame
@@ -79,22 +98,44 @@ public final class SessionViewModel: ObservableObject {
         self.cameraFeedbackAuthorizationStatus = cameraFeedbackService.authorizationStatus
         self.isColorFeedbackRunning = cameraFeedbackService.isRunning
         self.cameraFeedbackStatusMessage = nil
+        self.isActivePresetModified = false
+        self.recorderCaptureState = recorderService.captureState
+        self.recorderStatusMessage = recorderService.statusMessage
+        self.appearanceTransitionToken = UUID()
+        self.includeMicAudioInExport = Self.loadIncludeMicAudioPreference()
         self.surfaceStateMapper = RendererSurfaceStateMapper()
         self.audioStatusFormatter = AudioStatusFormatter()
         self.cancellables = []
         self.isAudioPipelineActive = false
         self.lastAudioPipelineError = nil
+        self.activePresetBaselineValues = nil
+        self.activePresetBaselineModeID = nil
         self.diagnosticsSnapshot = diagnosticsService.currentSnapshot(
             rendererSummary: rendererService.diagnosticsSummary,
             audioStatus: audioStatusFormatter.idleStatus()
         )
 
+        self.session.exportCaptureSettings = restoredExportSettings
+        if !self.supportedExportCodecs.contains(self.session.exportCaptureSettings.codec),
+           let fallbackCodec = Self.preferredSupportedCodec(from: self.supportedExportCodecs) {
+            self.session.exportCaptureSettings.codec = fallbackCodec
+        }
+        persistExportCaptureSettings()
+
         bindAudioStreams()
         bindCameraFeedbackStream()
+        bindRecorderStreams()
+        bindExternalDisplayStreams()
         refreshAudioInputs()
         syncAudioAnalysisTuning()
         syncCameraFeedbackStatus()
         rendererService.updateCameraFeedbackFrame(cameraFeedbackService.latestFrame)
+        self.session.availableDisplayTargets = externalDisplayCoordinator.availableTargets()
+        externalDisplayCoordinator.selectDisplayTarget(id: self.session.outputState.selectedDisplayTargetID)
+        self.session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
+        if self.session.activePresetID != nil {
+            capturePresetBaseline(modeID: self.session.activeModeID)
+        }
         syncRendererState()
     }
 
@@ -106,8 +147,12 @@ public final class SessionViewModel: ObservableObject {
         session.availableDisplayTargets.first(where: { $0.id == session.outputState.selectedDisplayTargetID })
     }
 
-    public var activeExportProfile: ExportProfile? {
-        exportProfiles.first(where: { $0.id == session.activeExportProfileID })
+    public var isLightGlassAppearance: Bool {
+        session.outputState.glassAppearanceStyle == .light
+    }
+
+    public var exportCaptureSettings: ExportCaptureSettings {
+        session.exportCaptureSettings
     }
 
     public var quickControlDescriptors: [ParameterDescriptor] {
@@ -118,6 +163,17 @@ public final class SessionViewModel: ObservableObject {
     public var primarySurfaceControlDescriptors: [ParameterDescriptor] {
         let descriptorIDs = ParameterCatalog.surfaceControlParameterIDs(for: session.activeModeID)
         return descriptorIDs.compactMap { parameterStore.descriptor(for: $0) }
+    }
+
+    public var presetsForActiveMode: [Preset] {
+        presets.filter { $0.modeID == session.activeModeID }
+    }
+
+    public var activePresetDisplayName: String {
+        guard isActivePresetModified, session.activePresetID != nil else {
+            return session.activePresetName
+        }
+        return "\(session.activePresetName) • Modified"
     }
 
     public var rendererSurfaceState: RendererSurfaceState {
@@ -198,6 +254,22 @@ public final class SessionViewModel: ObservableObject {
         default:
             break
         }
+        syncPresetDirtyState()
+        syncRendererState()
+    }
+
+    public var colorShiftHueCenterShift: Double {
+        parameterStore.value(
+            for: Self.colorShiftHueCenterTrimID,
+            scope: .mode(.colorShift)
+        )?.scalarValue ?? 0
+    }
+
+    public func adjustColorShiftHueCenter(by delta: Double) {
+        guard let descriptor = parameterStore.descriptor(for: Self.colorShiftHueCenterTrimID) else { return }
+        let next = wrappedUnit(colorShiftHueCenterShift + delta)
+        parameterStore.setValue(.scalar(next), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -206,6 +278,7 @@ public final class SessionViewModel: ObservableObject {
         if modeID != .colorShift {
             stopColorFeedbackCapture()
         }
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -213,11 +286,70 @@ public final class SessionViewModel: ObservableObject {
         session.activePresetID = preset.id
         session.activePresetName = preset.name
         session.activeModeID = preset.modeID
-        parameterStore.load(preset.values)
+        parameterStore.apply(preset.values)
+        capturePresetBaseline(modeID: preset.modeID)
         if preset.modeID != .colorShift {
             stopColorFeedbackCapture()
         }
         syncRendererState()
+    }
+
+    @discardableResult
+    public func quickSaveActiveModePreset() -> Preset? {
+        let modeDescriptor = ParameterCatalog.modeDescriptor(for: session.activeModeID)
+        let timestamp = Self.quickSaveTimestampFormatter.string(from: Date())
+        let defaultName = "\(modeDescriptor.name) \(timestamp)"
+        let preset = Preset(
+            name: defaultName,
+            modeID: session.activeModeID,
+            values: snapshotForActiveModePreset()
+        )
+        do {
+            try presetService.save(preset: preset)
+            refreshPresetsFromStore()
+            session.activePresetID = preset.id
+            session.activePresetName = preset.name
+            capturePresetBaseline(modeID: session.activeModeID)
+            syncRendererState()
+            return preset
+        } catch {
+            return nil
+        }
+    }
+
+    public func renamePreset(id: UUID, newName: String) {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+        guard var preset = presets.first(where: { $0.id == id }) else { return }
+
+        preset.name = trimmedName
+        do {
+            try presetService.save(preset: preset)
+            refreshPresetsFromStore()
+            if session.activePresetID == id {
+                session.activePresetName = trimmedName
+            }
+            syncPresetDirtyState()
+            syncRendererState()
+        } catch {
+            return
+        }
+    }
+
+    public func deletePreset(id: UUID) {
+        do {
+            try presetService.deletePreset(id: id)
+            refreshPresetsFromStore()
+            if session.activePresetID == id {
+                session.activePresetID = nil
+                session.activePresetName = "Unsaved Session"
+                clearPresetBaseline()
+            }
+            syncPresetDirtyState()
+            syncRendererState()
+        } catch {
+            return
+        }
     }
 
     public func cycleTunnelVariant() {
@@ -226,6 +358,7 @@ public final class SessionViewModel: ObservableObject {
 
         let next = (tunnelVariantIndex + 1) % 3
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -235,6 +368,7 @@ public final class SessionViewModel: ObservableObject {
 
         let clamped = min(max(index, 0), 2)
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -244,6 +378,7 @@ public final class SessionViewModel: ObservableObject {
 
         let next = (fractalPaletteIndex + 1) % 8
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -253,6 +388,7 @@ public final class SessionViewModel: ObservableObject {
 
         let clamped = min(max(index, 0), 7)
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -262,6 +398,7 @@ public final class SessionViewModel: ObservableObject {
 
         let next = (riemannPaletteIndex + 1) % 8
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
@@ -271,17 +408,73 @@ public final class SessionViewModel: ObservableObject {
 
         let clamped = min(max(index, 0), 7)
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
         syncRendererState()
     }
 
     public func selectDisplayTarget(id: String) {
         externalDisplayCoordinator.selectDisplayTarget(id: id)
-        session.outputState.selectedDisplayTargetID = id
-        session.availableDisplayTargets = externalDisplayCoordinator.availableTargets()
+        session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
+        session.availableDisplayTargets = externalDisplayCoordinator.targets
     }
 
-    public func selectExportProfile(_ profile: ExportProfile) {
-        session.activeExportProfileID = profile.id
+    public func toggleGlassAppearanceStyle() {
+        setGlassAppearanceStyle(isLightGlassAppearance ? .dark : .light)
+    }
+
+    public func setGlassAppearanceStyle(_ style: GlassAppearanceStyle) {
+        guard session.outputState.glassAppearanceStyle != style else { return }
+        session.outputState.glassAppearanceStyle = style
+        appearanceTransitionToken = UUID()
+        syncRendererState()
+    }
+
+    public func setExportResolutionPreset(_ preset: ExportResolutionPreset) {
+        session.exportCaptureSettings.resolutionPreset = preset
+        persistExportCaptureSettings()
+    }
+
+    public func setExportFrameRate(_ frameRate: ExportFrameRate) {
+        session.exportCaptureSettings.frameRate = frameRate
+        persistExportCaptureSettings()
+    }
+
+    public func setExportVideoCodec(_ codec: ExportVideoCodec) {
+        guard supportedExportCodecs.contains(codec) else { return }
+        session.exportCaptureSettings.codec = codec
+        persistExportCaptureSettings()
+    }
+
+    public func isExportCodecSupported(_ codec: ExportVideoCodec) -> Bool {
+        supportedExportCodecs.contains(codec)
+    }
+
+    public func setIncludeMicAudioInExport(_ isEnabled: Bool) {
+        includeMicAudioInExport = isEnabled
+        Self.persistIncludeMicAudioPreference(isEnabled)
+    }
+
+    public func startRecorderCapture() async {
+        let request = RecorderCaptureRequest(
+            settings: session.exportCaptureSettings,
+            includeMicAudio: includeMicAudioInExport
+        )
+
+        if let frameSink = recorderService as? RendererFrameCaptureSink {
+            rendererService.setFrameCaptureSink(frameSink)
+        }
+
+        do {
+            try await recorderService.startCapture(request: request)
+        } catch {
+            rendererService.setFrameCaptureSink(nil)
+            recorderCaptureState = .failed(error.localizedDescription)
+        }
+    }
+
+    public func stopRecorderCapture() async {
+        rendererService.setFrameCaptureSink(nil)
+        await recorderService.stopCapture()
     }
 
     public func refreshDiagnostics() {
@@ -430,6 +623,103 @@ public final class SessionViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    private func bindRecorderStreams() {
+        recorderService.captureStatePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self else { return }
+                recorderCaptureState = state
+                switch state {
+                case .starting, .recording:
+                    if let frameSink = recorderService as? RendererFrameCaptureSink {
+                        rendererService.setFrameCaptureSink(frameSink)
+                    }
+                case .idle, .finalizing, .completed, .failed:
+                    rendererService.setFrameCaptureSink(nil)
+                }
+                refreshDiagnostics()
+            }
+            .store(in: &cancellables)
+
+        recorderService.statusMessagePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] message in
+                self?.recorderStatusMessage = message
+            }
+            .store(in: &cancellables)
+    }
+
+    private func bindExternalDisplayStreams() {
+        externalDisplayCoordinator.targetsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] targets in
+                guard let self else { return }
+                session.availableDisplayTargets = targets
+            }
+            .store(in: &cancellables)
+
+        externalDisplayCoordinator.selectedTargetIDPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] selectedTargetID in
+                guard let self else { return }
+                session.outputState.selectedDisplayTargetID = selectedTargetID
+            }
+            .store(in: &cancellables)
+    }
+
+    private func refreshPresetsFromStore() {
+        presets = presetService.loadPresets()
+    }
+
+    private func snapshotForActiveModePreset() -> [ScopedParameterValue] {
+        snapshotForPresetComparison(modeID: session.activeModeID)
+    }
+
+    private func snapshotForPresetComparison(modeID: VisualModeID) -> [ScopedParameterValue] {
+        parameterStore.snapshot().filter { assignment in
+            switch assignment.scope.kind {
+            case .global:
+                return true
+            case .mode:
+                return assignment.scope.modeID == modeID
+            }
+        }
+    }
+
+    private func capturePresetBaseline(modeID: VisualModeID) {
+        activePresetBaselineModeID = modeID
+        activePresetBaselineValues = snapshotForPresetComparison(modeID: modeID)
+        isActivePresetModified = false
+    }
+
+    private func clearPresetBaseline() {
+        activePresetBaselineModeID = nil
+        activePresetBaselineValues = nil
+        isActivePresetModified = false
+    }
+
+    private func syncPresetDirtyState() {
+        guard session.activePresetID != nil else {
+            clearPresetBaseline()
+            return
+        }
+
+        guard
+            let baselineModeID = activePresetBaselineModeID,
+            let baselineValues = activePresetBaselineValues
+        else {
+            isActivePresetModified = true
+            return
+        }
+
+        guard session.activeModeID == baselineModeID else {
+            isActivePresetModified = true
+            return
+        }
+
+        isActivePresetModified = snapshotForPresetComparison(modeID: baselineModeID) != baselineValues
+    }
+
     private func syncAudioAnalysisTuning() {
         let responseInputGain = parameterStore.value(
             for: "response.inputGain",
@@ -448,6 +738,66 @@ public final class SessionViewModel: ObservableObject {
         )
     }
 
+    private static func loadIncludeMicAudioPreference() -> Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: includeMicAudioDefaultsKey) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: includeMicAudioDefaultsKey)
+    }
+
+    private static func persistIncludeMicAudioPreference(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: includeMicAudioDefaultsKey)
+    }
+
+    private static func loadExportCaptureSettings(defaultValue: ExportCaptureSettings) -> ExportCaptureSettings {
+        let defaults = UserDefaults.standard
+
+        let resolution: ExportResolutionPreset = {
+            guard let raw = defaults.string(forKey: exportResolutionDefaultsKey),
+                  let parsed = ExportResolutionPreset(rawValue: raw) else {
+                return defaultValue.resolutionPreset
+            }
+            return parsed
+        }()
+
+        let frameRate: ExportFrameRate = {
+            let stored = defaults.integer(forKey: exportFrameRateDefaultsKey)
+            guard stored != 0, let parsed = ExportFrameRate(rawValue: stored) else {
+                return defaultValue.frameRate
+            }
+            return parsed
+        }()
+
+        let codec: ExportVideoCodec = {
+            guard let raw = defaults.string(forKey: exportCodecDefaultsKey),
+                  let parsed = ExportVideoCodec(rawValue: raw) else {
+                return defaultValue.codec
+            }
+            return parsed
+        }()
+
+        return ExportCaptureSettings(
+            resolutionPreset: resolution,
+            frameRate: frameRate,
+            codec: codec
+        )
+    }
+
+    private func persistExportCaptureSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(session.exportCaptureSettings.resolutionPreset.rawValue, forKey: Self.exportResolutionDefaultsKey)
+        defaults.set(session.exportCaptureSettings.frameRate.rawValue, forKey: Self.exportFrameRateDefaultsKey)
+        defaults.set(session.exportCaptureSettings.codec.rawValue, forKey: Self.exportCodecDefaultsKey)
+    }
+
+    private static func preferredSupportedCodec(from supported: Set<ExportVideoCodec>) -> ExportVideoCodec? {
+        for codec in [ExportVideoCodec.hevc, .h264, .proRes422] where supported.contains(codec) {
+            return codec
+        }
+        return supported.first
+    }
+
     private var currentAudioStatus: String {
         if let lastAudioPipelineError {
             return lastAudioPipelineError
@@ -464,5 +814,10 @@ public final class SessionViewModel: ObservableObject {
     private func syncCameraFeedbackStatus() {
         cameraFeedbackAuthorizationStatus = cameraFeedbackService.authorizationStatus
         isColorFeedbackRunning = cameraFeedbackService.isRunning
+    }
+
+    private func wrappedUnit(_ value: Double) -> Double {
+        let wrapped = value - floor(value)
+        return wrapped < 0 ? wrapped + 1 : wrapped
     }
 }

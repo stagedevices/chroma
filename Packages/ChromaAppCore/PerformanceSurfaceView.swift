@@ -13,7 +13,7 @@ public struct PerformanceSurfaceView: View {
             renderCoordinator: sessionViewModel.renderCoordinator,
             surfaceState: sessionViewModel.rendererSurfaceState
         )
-        .background(Color.black)
+        .background(sessionViewModel.isLightGlassAppearance ? Color.white : Color.black)
         .onAppear {
             sessionViewModel.refreshDiagnostics()
         }

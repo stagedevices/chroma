@@ -44,16 +44,21 @@ It is not a VJ clip launcher or a general-purpose editor. Chroma should feel lik
 The current repository work establishes the foundation, first real render spine, and first live audio-to-feature path:
 - one iOS-first app target with Mac Catalyst support
 - one sparse root shell with routing seams
-- iOS action chrome as a two-column tile deck (glass-forward, medium-first sheets, fullscreen as immediate action)
-- iOS live mode controls moved into Settings sheet sections (persistent bottom sliders retained for Catalyst shell)
+- iOS and Mac Catalyst action chrome share a two-column tile deck (glass-forward, fullscreen as immediate action)
+- iOS uses medium-first sheets for actions; Catalyst uses adaptive popovers for short pickers and sheets for larger workflows
+- iOS live mode controls are in Settings sheet sections; Catalyst retains persistent bottom live controls for desktop tuning
+- Settings includes a glass appearance tile (`sun.max` / `moon.stars`) that toggles dark vs light glass chrome and switches idle ambient background black vs white with an ink-style transition
 - a full-screen performance canvas backed by Metal
 - five live modes (`Color Shift` + `Prism Field` + `Tunnel Cels` + `Fractal Caustics` + `Mandelbrot`) with stage-first composition
 - `Color Shift` supports:
   - default flat solid backfill (pixel-uniform frame color)
-  - pitch-reactive hybrid lock+glide hue behavior (YIN + HPS fallback, confidence-gated, hysteresis-stable)
+  - directional anti-chatter PWM hue behavior with bistable side latching (left/right hue-side lock instead of wide free-running oscillation)
+  - selectable excitement source modes (`Spectral`, `Temporal`, `Pitch`) to decide direction cues
+  - dual-point hue clamp (`Hue Range`) with inside/outside selection and hue-spectrum track editing
   - stage-mic adaptive pitch confidence weighting that profiles voice-like vs noisy input and tightens/relaxes fusion gates accordingly
   - confidence/intensity-driven saturation response with no idle hue drift in silence
-  - optional `Feedback` chip path (`Contour Flow`) driven by front-camera contour injection and GPU recursion, tinted by Color Shift hue logic
+  - feathered hue boundary clamping for smooth constraint behavior (no hard stepping)
+- optional `Feedback` chip path uses front-camera sampled color to drive abstract lava-lamp banding/shapes (no camera image passthrough)
 - in Color Shift, `No Image In Silence` remains authoritative for hard-black silence output (including feedback path)
 - `Prism Field` supports:
   - dedicated Facet Caustics multi-pass rendering (not radial spokes)
@@ -82,9 +87,25 @@ The current repository work establishes the foundation, first real render spine,
   - quality-tier term/tap/accent scaling for realtime stability
   - black-floor-first composition and silence blackout policy via `No Image In Silence`
 - typed domain models and service protocols
+- per-mode preset workflow:
+  - preset browser shows active-mode presets only
+  - quick-save from iOS live-controls tile with optional inline rename
+  - persisted local preset storage with a seeded starter bank (`Stage Color` plus one curated starter preset per remaining mode)
+  - startup backfill: if a preset library is missing entire modes, one curated starter preset is added per missing mode
+- production export path:
+  - clean program-feed recording from renderer output (no shell chrome)
+  - first-frame orientation lock so encoded output matches live program feed orientation (portrait remains portrait)
+  - explicit export settings (resolution / fps / codec) persisted in Settings
+  - sparse, medium-detent recorder console with prominent action tiles (`Start/Stop`, `Save to Photos`, `Share`)
+  - optional mic capture toggle (`with mic` / `video-only`)
+  - cache-first export output with explicit post-capture actions (`Save to Photos` primary, `Share` secondary)
+- iOS external cast path:
+  - live external-target detection and selection
+  - external window renders clean program output while device stays operator surface
+  - settings output includes an AirPlay route helper for quick route initiation
 - initial renderer diagnostics and render-state contracts
 - live audio input seam with metering + mono sample publication
 - live analysis seam publishing `AudioFeatureFrame` (including pitch-confidence lock fields)
 - initial logic tests for state, parameter, renderer-facing contracts, and audio pipeline core mapping
 
-It does not ship a finished visual engine, polished preset browser, or production export stack.
+It does not yet ship a polished set/cue system, advanced multi-camera workflows, or final production UX polish for every route edge case.

@@ -74,14 +74,38 @@ public enum ParameterCatalog {
         ParameterDescriptor(
             id: "mode.colorShift.hueRange",
             title: "Hue Range",
-            summary: "Span of hue rotation available to weighted amplitude and control input.",
+            summary: "Two-point hue clamp with inside/outside selection for Color Shift targeting.",
             group: .color,
             tier: .basic,
             scope: .mode(.colorShift),
-            controlStyle: .slider,
-            defaultValue: .scalar(0.74),
+            controlStyle: .hueRange,
+            defaultValue: .hueRange(min: 0.13, max: 0.87, outside: false),
             minimumValue: 0.0,
             maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.colorShift.hueCenterTrim",
+            title: "Hue Center Trim",
+            summary: "Internal hue-center offset for Color Shift range retuning.",
+            group: .color,
+            tier: .advanced,
+            scope: .mode(.colorShift),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.colorShift.excitementMode",
+            title: "Excitement Mode",
+            summary: "Directional cue source for Color Shift hue-side selection.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.colorShift),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 2.0
         ),
         ParameterDescriptor(
             id: "mode.prismField.facetDensity",
@@ -343,6 +367,7 @@ public enum ParameterCatalog {
                 "response.inputGain",
                 "mode.colorShift.hueResponse",
                 "mode.colorShift.hueRange",
+                "mode.colorShift.excitementMode",
             ]
         case .prismField:
             return [

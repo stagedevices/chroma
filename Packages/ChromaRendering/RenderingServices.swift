@@ -10,10 +10,15 @@ public protocol RendererService: AnyObject {
     var currentSurfaceState: RendererSurfaceState { get }
 
     func configure(view: MTKView)
+    func setFrameCaptureSink(_ sink: RendererFrameCaptureSink?)
     func update(activeModeID: VisualModeID)
     func update(surfaceState: RendererSurfaceState)
     func updateCameraFeedbackFrame(_ frame: CameraFeedbackFrame?)
     func draw(in view: MTKView, size: CGSize)
+}
+
+public protocol RendererFrameCaptureSink: AnyObject {
+    func consumeProgramFrame(texture: MTLTexture, hostTime: CFTimeInterval)
 }
 
 public protocol RenderCoordinator: AnyObject {
@@ -50,6 +55,10 @@ public final class HeadlessRendererService: RendererService {
         diagnosticsSummary.readinessStatus = .idle
         diagnosticsSummary.statusMessage = "Headless renderer configured"
         diagnosticsSummary.resolutionLabel = resolutionLabel(for: view.drawableSize)
+    }
+
+    public func setFrameCaptureSink(_ sink: RendererFrameCaptureSink?) {
+        _ = sink
     }
 
     public func update(activeModeID: VisualModeID) {
@@ -109,16 +118,25 @@ public final class MetalRendererService: RendererService {
     private var fractalQuality = FractalQualityProfile.cinematicHeavy
     private var riemannQuality = RiemannQualityProfile.cinematicHeavy
     private var forceRadialFallbackUntil: CFTimeInterval?
+    private weak var frameCaptureSink: RendererFrameCaptureSink?
+    private var frameCaptureSourceViewID: ObjectIdentifier?
     private var colorShiftHuePhase: Float = 0
+    private var colorShiftPWMPhase: Float = 0
+    private var colorShiftDirectionState = ColorShiftDirectionState()
     private var colorShiftSaturation: Float = 0.84
     private var lastColorShiftHueUpdateTime: CFTimeInterval?
     private var latestCameraFeedbackFrame: CameraFeedbackFrame?
+    private var latestCameraFeedbackColorSample: CameraFeedbackColorSample?
     private var cameraTextureCache: CVMetalTextureCache?
     private var inFlightCameraTextureRef: CVMetalTexture?
     private var prismImpulsePool = PrismImpulsePool(capacity: kMaxPrismImpulses)
     private var prismImpulseGPUData = [PrismImpulseGPUData](repeating: .zero, count: kMaxPrismImpulses)
     private var tunnelShapePool = TunnelShapePool(capacity: kMaxTunnelShapes)
     private var tunnelShapeGPUData = [TunnelShapeGPUData](repeating: .zero, count: kMaxTunnelShapes)
+    private var tunnelSyntheticAttackCounter: UInt64 = 0
+    private var tunnelLastSyntheticSpawnTime: Float = -.greatestFiniteMagnitude
+    private var tunnelLastSyntheticEvidence: Float = 0
+    private var tunnelLastGuaranteedSpawnTime: Float = -.greatestFiniteMagnitude
     private var fractalPulsePool = FractalPulsePool(capacity: kMaxFractalPulses)
     private var fractalPulseGPUData = [FractalPulseGPUData](repeating: .zero, count: kMaxFractalPulses)
     private var fractalFlowPhase: Float = 0
@@ -200,6 +218,11 @@ public final class MetalRendererService: RendererService {
         diagnosticsSummary.activeModeSummary = currentSurfaceState.activeModeID.displayName
     }
 
+    public func setFrameCaptureSink(_ sink: RendererFrameCaptureSink?) {
+        frameCaptureSink = sink
+        frameCaptureSourceViewID = nil
+    }
+
     public func update(activeModeID: VisualModeID) {
         let previousMode = currentSurfaceState.activeModeID
         currentSurfaceState.activeModeID = activeModeID
@@ -220,6 +243,14 @@ public final class MetalRendererService: RendererService {
 
     public func updateCameraFeedbackFrame(_ frame: CameraFeedbackFrame?) {
         latestCameraFeedbackFrame = frame
+        if let frame {
+            latestCameraFeedbackColorSample = sampleCameraFeedbackColor(
+                from: frame,
+                previous: latestCameraFeedbackColorSample
+            )
+        } else {
+            latestCameraFeedbackColorSample = nil
+        }
     }
 
     public func draw(in view: MTKView, size: CGSize) {
@@ -258,7 +289,8 @@ public final class MetalRendererService: RendererService {
                 renderPassDescriptor: renderPassDescriptor,
                 drawable: drawable,
                 drawableID: drawableID,
-                time: now
+                time: now,
+                sourceView: view
             )
             return
         }
@@ -332,6 +364,7 @@ public final class MetalRendererService: RendererService {
                cameraTexture: cameraTextureBundle.texture
            ) {
             colorFeedbackTargets = feedbackTargets
+            emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
             prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID, retainedCameraTexture: cameraTextureBundle.backing)
             commandBuffer.commit()
             return
@@ -361,6 +394,7 @@ public final class MetalRendererService: RendererService {
                 uniforms: &uniforms
             ) {
                 prismTargets = targets
+                emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
                 return
@@ -394,6 +428,7 @@ public final class MetalRendererService: RendererService {
                 uniforms: &uniforms
             ) {
                 tunnelTargets = targets
+                emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
                 return
@@ -426,6 +461,7 @@ public final class MetalRendererService: RendererService {
                 uniforms: &uniforms
             ) {
                 fractalTargets = targets
+                emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
                 return
@@ -458,6 +494,7 @@ public final class MetalRendererService: RendererService {
                 uniforms: &uniforms
             ) {
                 riemannTargets = targets
+                emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
                 return
@@ -480,6 +517,7 @@ public final class MetalRendererService: RendererService {
 
         commandBuffer.present(drawable)
 
+        emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
         prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
         commandBuffer.commit()
     }
@@ -1973,10 +2011,47 @@ public final class MetalRendererService: RendererService {
     }
 
     private func spawnTunnelShapeIfNeeded(controls: RendererControlState, elapsedTime: Float) {
-        guard controls.isAttack else { return }
+        let evidence = tunnelSyntheticSpawnEvidence(controls: controls)
+        defer { tunnelLastSyntheticEvidence = evidence }
+
+        let spawnAttackID: UInt64
+        if controls.attackID > 0, controls.attackID != tunnelShapePool.lastAttackID {
+            // Attack IDs are monotonic and can be observed outside the exact isAttack frame,
+            // so spawn on new IDs to avoid missing cels between analysis and render ticks.
+            spawnAttackID = controls.attackID
+        } else if controls.isAttack, (elapsedTime - tunnelLastSyntheticSpawnTime) >= 0.045 {
+            // Analysis can occasionally emit an attack frame without a fresh attackID.
+            // Treat that as a legitimate attack source for tunnel cels.
+            tunnelSyntheticAttackCounter &+= 1
+            tunnelLastSyntheticSpawnTime = elapsedTime
+            spawnAttackID = 0xC100_0000_0000_0000 | tunnelSyntheticAttackCounter
+        } else if shouldTriggerTunnelSyntheticSpawn(
+            evidence: evidence,
+            previousEvidence: tunnelLastSyntheticEvidence,
+            elapsedTime: elapsedTime,
+            lastSpawnTime: tunnelLastSyntheticSpawnTime
+        ) {
+            // If analysis misses an edge frame, synthesize a deterministic attack key from live evidence.
+            tunnelSyntheticAttackCounter &+= 1
+            tunnelLastSyntheticSpawnTime = elapsedTime
+            spawnAttackID = 0xC000_0000_0000_0000 | tunnelSyntheticAttackCounter
+        } else if shouldTriggerTunnelGuaranteedSpawn(
+            elapsedTime: elapsedTime,
+            lastSpawnTime: tunnelLastGuaranteedSpawnTime,
+            hasActiveShapes: tunnelShapePool.events.contains(where: \.isActive)
+        ) {
+            // Last-resort guard: when tunnel is active but attacks are missed repeatedly,
+            // inject sparse deterministic cels so the mode never appears inert.
+            tunnelSyntheticAttackCounter &+= 1
+            tunnelLastSyntheticSpawnTime = elapsedTime
+            tunnelLastGuaranteedSpawnTime = elapsedTime
+            spawnAttackID = 0xC200_0000_0000_0000 | tunnelSyntheticAttackCounter
+        } else {
+            return
+        }
 
         let sector = tunnelCelsSectorIndex(
-            attackID: controls.attackID,
+            attackID: spawnAttackID,
             lowBandEnergy: controls.lowBandEnergy,
             midBandEnergy: controls.midBandEnergy,
             highBandEnergy: controls.highBandEnergy,
@@ -1990,28 +2065,28 @@ public final class MetalRendererService: RendererService {
         let variant = UInt32(min(max(Int(controls.tunnelVariant.rounded()), 0), 2))
         let center = SIMD2<Float>(Float(controls.centerOffset.x), Float(controls.centerOffset.y))
 
-        _ = tunnelShapePool.insertIfNewAttack(attackID: controls.attackID) {
-            let jitterA = (spectralHash01(controls.attackID ^ 0xEED4_F5D1_8A1B_28F1) * 2) - 1
-            let jitterB = spectralHash01(controls.attackID ^ 0x4CF5_AD43_2745_937F)
-            let jitterC = spectralHash01(controls.attackID ^ 0xC3A5_C85C_97CB_3127)
+        _ = tunnelShapePool.insertIfNewAttack(attackID: spawnAttackID) {
+            let jitterA = (spectralHash01(spawnAttackID ^ 0xEED4_F5D1_8A1B_28F1) * 2) - 1
+            let jitterB = spectralHash01(spawnAttackID ^ 0x4CF5_AD43_2745_937F)
+            let jitterC = spectralHash01(spawnAttackID ^ 0xC3A5_C85C_97CB_3127)
             let sectorAngle = (Float(sector) + 0.5) * ((2 * .pi) / 12)
             let ringDirection = SIMD2<Float>(cos(sectorAngle), sin(sectorAngle))
             let squareEdge = ringDirection / max(max(abs(ringDirection.x), abs(ringDirection.y)), 0.0001)
             let tangent = simd_normalize(SIMD2<Float>(-squareEdge.y, squareEdge.x))
-            let laneSpread = mix(0.20, 0.56, min(max((shapeScale * 0.66) + (jitterB * 0.34), 0), 1))
-            let laneJitter = jitterA * mix(0.02, 0.08, 1 - min(max(shapeScale, 0), 1))
+            let laneSpread = mix(0.02, 0.18, min(max((shapeScale * 0.72) + (jitterB * 0.28), 0), 1))
+            let laneJitter = jitterA * mix(0.005, 0.03, 1 - min(max(shapeScale, 0), 1))
             let laneOrigin = center + (squareEdge * laneSpread) + (tangent * laneJitter)
             let axisSeed = simd_normalize(squareEdge + (tangent * (jitterA * 0.45)))
-            let forwardSpeed = mix(0.16, 1.55, min(max((depthSpeed * 0.74) + (dominantEnergy * 0.26), 0), 1))
-            let depthOffset = 0.08 + (jitterC * 0.40)
-            let baseScale = mix(0.16, 1.10, min(max((shapeScale * 0.64) + (jitterB * 0.36), 0), 1))
+            let forwardSpeed = mix(0.08, 0.72, min(max((depthSpeed * 0.64) + (dominantEnergy * 0.36), 0), 1))
+            let depthOffset = 0.01 + (jitterC * 0.08)
+            let baseScale = mix(0.72, 2.40, min(max((shapeScale * 0.70) + (jitterB * 0.30), 0), 1))
             let hueShift = (Float(sector) / 12.0) + (jitterA * 0.08)
             let sustainLevel = min(max(0.42 + (attackStrength * 0.35), 0.22), 0.96)
             let decayShape = 0.85 + (jitterC * 0.70)
             let releaseDuration = mix(0.25, 2.50, min(max(releaseTail, 0), 1))
 
             return TunnelShapeEvent(
-                attackID: controls.attackID,
+                attackID: spawnAttackID,
                 birthTime: elapsedTime,
                 laneOrigin: laneOrigin,
                 forwardSpeed: forwardSpeed,
@@ -2106,6 +2181,42 @@ public final class MetalRendererService: RendererService {
             }
 
             tunnelShapePool.events[index] = event
+        }
+
+        if activeCount == 0 {
+            let syntheticExcitation = max(
+                sidechainEnergy,
+                max(Float(controls.attackStrength), tunnelSyntheticSpawnEvidence(controls: controls))
+            )
+            if syntheticExcitation >= 0.04 {
+                let variant = Float(min(max(Int(controls.tunnelVariant.rounded()), 0), 2))
+                let shapeScale = Float(controls.tunnelShapeScale)
+                let depthSpeed = Float(controls.tunnelDepthSpeed)
+                let depthPulse = 0.55 + (0.45 * sin(elapsedTime * (1.8 + (depthSpeed * 2.4))))
+                var hue = (elapsedTime * 0.07) +
+                    (Float(controls.lowBandEnergy) * 0.18) +
+                    (Float(controls.highBandEnergy) * 0.11)
+                hue.formTruncatingRemainder(dividingBy: 1)
+                if hue < 0 {
+                    hue += 1
+                }
+                tunnelShapeGPUData[0] = TunnelShapeGPUData(
+                    positionDepthScaleEnvelope: SIMD4<Float>(
+                        0,
+                        0,
+                        0.24 + (0.07 * (1 - depthPulse)),
+                        mix(0.90, 2.90, shapeScale) * mix(0.72, 1.0, syntheticExcitation)
+                    ),
+                    forwardHueVariantSeed: SIMD4<Float>(
+                        0.42 + (depthSpeed * 0.35),
+                        hue,
+                        variant,
+                        min(max(0.42 + (syntheticExcitation * 0.82), 0), 1)
+                    ),
+                    axisDecaySustainRelease: SIMD4<Float>(1, 0, 0.95, 0)
+                )
+                activeCount = 1
+            }
         }
 
         if activeCount < tunnelShapeGPUData.count {
@@ -2302,7 +2413,8 @@ public final class MetalRendererService: RendererService {
         renderPassDescriptor: MTLRenderPassDescriptor,
         drawable: CAMetalDrawable,
         drawableID: ObjectIdentifier,
-        time: CFTimeInterval
+        time: CFTimeInterval,
+        sourceView: MTKView
     ) {
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             droppedFrameCount += 1
@@ -2323,9 +2435,20 @@ public final class MetalRendererService: RendererService {
         if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             encoder.endEncoding()
         }
+        emitProgramFrameIfNeeded(from: sourceView, texture: drawable.texture, at: time)
         prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func emitProgramFrameIfNeeded(from sourceView: MTKView, texture: MTLTexture, at hostTime: CFTimeInterval) {
+        guard let sink = frameCaptureSink else { return }
+        let sourceViewID = ObjectIdentifier(sourceView)
+        if frameCaptureSourceViewID == nil {
+            frameCaptureSourceViewID = sourceViewID
+        }
+        guard frameCaptureSourceViewID == sourceViewID else { return }
+        sink.consumeProgramFrame(texture: texture, hostTime: hostTime)
     }
 
     private func prepareCommandBufferForCommit(
@@ -2564,19 +2687,59 @@ public final class MetalRendererService: RendererService {
     private func updateColorShiftHuePhase(now: CFTimeInterval, state: RendererSurfaceState) {
         defer { lastColorShiftHueUpdateTime = now }
 
-        guard state.activeModeID == .colorShift else { return }
-        colorShiftSaturation = colorShiftSaturationValue(controls: state.controls)
-        guard let lastColorShiftHueUpdateTime else { return }
+        guard state.activeModeID == .colorShift else {
+            colorShiftDirectionState = ColorShiftDirectionState()
+            return
+        }
+        var nextSaturation = colorShiftSaturationValue(controls: state.controls)
+        guard let lastColorShiftHueUpdateTime else {
+            if state.controls.colorFeedbackEnabled,
+               let sample = latestCameraFeedbackColorSample {
+                colorShiftHuePhase = colorShiftClampedHueTarget(targetHue: sample.hue, controls: state.controls)
+                nextSaturation = mix(nextSaturation, sample.saturation.clamped(to: 0.22 ... 0.98), 0.64)
+            } else {
+                colorShiftHuePhase = colorShiftCenterHue(controls: state.controls)
+            }
+            colorShiftSaturation = nextSaturation.clamped(to: 0.22 ... 0.98)
+            colorShiftDirectionState = ColorShiftDirectionState()
+            return
+        }
 
         let deltaTime = Float(max(0, min(now - lastColorShiftHueUpdateTime, 0.25)))
         guard deltaTime > 0 else { return }
-
-        let nextHue = advanceColorShiftHuePhase(
-            currentHue: colorShiftHuePhase,
+        colorShiftPWMPhase = advanceColorShiftPWMPhase(
+            currentPhase: colorShiftPWMPhase,
             deltaTime: deltaTime,
             controls: state.controls
         )
+        colorShiftDirectionState = advanceColorShiftDirectionState(
+            state: colorShiftDirectionState,
+            deltaTime: deltaTime,
+            controls: state.controls
+        )
+
+        var nextHue = advanceColorShiftHuePhase(
+            currentHue: colorShiftHuePhase,
+            deltaTime: deltaTime,
+            controls: state.controls,
+            pwmPhase: colorShiftPWMPhase,
+            directionSign: colorShiftDirectionState.directionSign
+        )
+        if state.controls.colorFeedbackEnabled,
+           let cameraSample = latestCameraFeedbackColorSample {
+            let cameraHue = colorShiftClampedHueTarget(
+                targetHue: cameraSample.hue,
+                controls: state.controls
+            )
+            let drive = colorShiftDrive(controls: state.controls).clamped(to: 0 ... 1)
+            let response = Float(state.controls.motion).clamped(to: 0 ... 1)
+            let cameraConfidence = cameraSample.saturation.clamped(to: 0 ... 1)
+            let influence = (mix(0.24, 0.76, response) * mix(0.60, 1.0, max(drive, cameraConfidence))).clamped(to: 0 ... 0.86)
+            nextHue = hueLerp(from: nextHue, to: cameraHue, t: influence)
+            nextSaturation = mix(nextSaturation, cameraSample.saturation.clamped(to: 0.22 ... 0.98), 0.62)
+        }
         colorShiftHuePhase = nextHue
+        colorShiftSaturation = nextSaturation.clamped(to: 0.22 ... 0.98)
     }
 
     private func updateFractalFlowPhase(now: CFTimeInterval, state: RendererSurfaceState) {
@@ -2880,6 +3043,11 @@ public final class MetalRendererService: RendererService {
 private extension MetalRendererService {
     func handleModeTransition(from oldMode: VisualModeID, to newMode: VisualModeID) {
         guard oldMode != newMode else { return }
+        if oldMode == .tunnelCels || newMode == .tunnelCels {
+            tunnelLastSyntheticEvidence = 0
+            tunnelLastSyntheticSpawnTime = -.greatestFiniteMagnitude
+            tunnelLastGuaranteedSpawnTime = -.greatestFiniteMagnitude
+        }
         if oldMode == .riemannCorridor || newMode == .riemannCorridor {
             riemannSmoothedSteering = .zero
             riemannSmoothedIntensity = 0
@@ -4041,6 +4209,93 @@ public func rendererPassSelection(
     return .radial
 }
 
+private struct CameraFeedbackColorSample {
+    var hue: Float
+    var saturation: Float
+}
+
+private extension MetalRendererService {
+    func sampleCameraFeedbackColor(
+        from frame: CameraFeedbackFrame,
+        previous: CameraFeedbackColorSample?
+    ) -> CameraFeedbackColorSample? {
+        let pixelBuffer = frame.pixelBuffer
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        guard width > 0, height > 0 else { return previous }
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else { return previous }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return previous }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let pointer = baseAddress.assumingMemoryBound(to: UInt8.self)
+
+        let sampleColumns = 8
+        let sampleRows = 6
+        let maxX = width - 1
+        let maxY = height - 1
+        var totalR: Float = 0
+        var totalG: Float = 0
+        var totalB: Float = 0
+        var sampleCount: Float = 0
+
+        for row in 0..<sampleRows {
+            for column in 0..<sampleColumns {
+                let x = (column * maxX) / max(sampleColumns - 1, 1)
+                let y = (row * maxY) / max(sampleRows - 1, 1)
+                let offset = (y * bytesPerRow) + (x * 4)
+                let b = Float(pointer[offset]) / 255
+                let g = Float(pointer[offset + 1]) / 255
+                let r = Float(pointer[offset + 2]) / 255
+                totalR += r
+                totalG += g
+                totalB += b
+                sampleCount += 1
+            }
+        }
+
+        guard sampleCount > 0 else { return previous }
+        let averageR = totalR / sampleCount
+        let averageG = totalG / sampleCount
+        let averageB = totalB / sampleCount
+        let hsv = rgbToHsv(r: averageR, g: averageG, b: averageB)
+
+        guard let previous else {
+            return CameraFeedbackColorSample(hue: hsv.h, saturation: hsv.s)
+        }
+        return CameraFeedbackColorSample(
+            hue: hueLerp(from: previous.hue, to: hsv.h, t: 0.34),
+            saturation: mix(previous.saturation, hsv.s, 0.34).clamped(to: 0 ... 1)
+        )
+    }
+}
+
+private func rgbToHsv(r: Float, g: Float, b: Float) -> (h: Float, s: Float, v: Float) {
+    let maxValue = max(r, max(g, b))
+    let minValue = min(r, min(g, b))
+    let delta = maxValue - minValue
+    let saturation = maxValue > 0 ? (delta / maxValue) : 0
+
+    var hue: Float = 0
+    if delta > 0.0001 {
+        if maxValue == r {
+            hue = (g - b) / delta
+            if g < b {
+                hue += 6
+            }
+        } else if maxValue == g {
+            hue = ((b - r) / delta) + 2
+        } else {
+            hue = ((r - g) / delta) + 4
+        }
+        hue /= 6
+    }
+
+    return (wrappedHue(hue), saturation.clamped(to: 0 ... 1), maxValue.clamped(to: 0 ... 1))
+}
+
 private func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
     a + ((b - a) * min(max(t, 0), 1))
 }
@@ -4049,6 +4304,155 @@ private extension Float {
     func clamped(to range: ClosedRange<Float>) -> Float {
         min(max(self, range.lowerBound), range.upperBound)
     }
+}
+
+enum ColorShiftExcitementMode: Int, Codable, Sendable {
+    case spectral = 0
+    case temporal = 1
+    case pitch = 2
+
+    static func resolved(from rawValue: Double) -> ColorShiftExcitementMode {
+        let snapped = min(max(Int(rawValue.rounded()), 0), 2)
+        return ColorShiftExcitementMode(rawValue: snapped) ?? .spectral
+    }
+}
+
+struct ColorShiftDirectionState: Equatable, Sendable {
+    var directionSign: Float = 1
+    var smoothedEvidence: Float = 0
+    var candidateSign: Float = 0
+    var candidateElapsed: Float = 0
+    var cooldownRemaining: Float = 0
+    var lastAttackID: UInt64 = 0
+    var lastPitchPhase: Float?
+}
+
+func colorShiftExcitementEvidence(
+    controls: RendererControlState,
+    mode: ColorShiftExcitementMode,
+    previousPitchPhase: Float?
+) -> (evidence: Float, nextPitchPhase: Float?) {
+    let controls = controls.clamped()
+    let low = Float(controls.lowBandEnergy)
+    let mid = Float(controls.midBandEnergy)
+    let high = Float(controls.highBandEnergy)
+    let amplitude = Float(controls.featureAmplitude)
+    let transientBase =
+        (controls.highBandEnergy * 0.42) +
+        (controls.attackStrength * 0.36) +
+        (controls.featureAmplitude * 0.22)
+    let transient = Float(min(max(transientBase, 0), 1))
+
+    let sustainBase =
+        (controls.featureAmplitude * 0.74) +
+        (controls.midBandEnergy * 0.26) -
+        (Double(transient) * 0.24)
+    let sustain = Float(min(max(sustainBase, 0), 1))
+    let confidence = Float(controls.pitchConfidence).clamped(to: 0 ... 1)
+    let attack = Float(controls.attackStrength).clamped(to: 0 ... 1)
+
+    let spectralEvidence = ((high - low) * 1.08) + ((mid - ((low + high) * 0.5)) * 0.34)
+    let temporalEvidence = ((transient - sustain) * 1.20) + ((attack - amplitude) * 0.22)
+
+    switch mode {
+    case .spectral:
+        return (spectralEvidence.clamped(to: -1 ... 1), previousPitchPhase)
+    case .temporal:
+        return (temporalEvidence.clamped(to: -1 ... 1), previousPitchPhase)
+    case .pitch:
+        guard
+            confidence >= 0.6,
+            let stablePitchClass = controls.stablePitchClass
+        else {
+            let fallback = (spectralEvidence * 0.76) + (temporalEvidence * 0.24)
+            return (fallback.clamped(to: -1 ... 1), previousPitchPhase)
+        }
+
+        let classPhase = Float(min(max(stablePitchClass, 0), 11)) / 12.0
+        let centsPhase = (Float(controls.stablePitchCents).clamped(to: -50 ... 50)) / 1200.0
+        let pitchPhase = wrappedHue(classPhase + centsPhase)
+        let phaseDelta: Float
+        if let previousPitchPhase {
+            phaseDelta = shortestHueDelta(from: previousPitchPhase, to: pitchPhase)
+        } else {
+            phaseDelta = 0
+        }
+
+        let centsComponent = (Float(controls.stablePitchCents).clamped(to: -50 ... 50)) / 50.0
+        let pitchEvidence = ((phaseDelta * 10.8) + (centsComponent * 0.34)).clamped(to: -1 ... 1)
+        return (pitchEvidence, pitchPhase)
+    }
+}
+
+func advanceColorShiftDirectionState(
+    state: ColorShiftDirectionState,
+    deltaTime: Float,
+    controls: RendererControlState
+) -> ColorShiftDirectionState {
+    guard deltaTime > 0 else { return state }
+    let controls = controls.clamped()
+    let mode = ColorShiftExcitementMode.resolved(from: controls.colorShiftExcitementMode)
+    let response = Float(controls.motion).clamped(to: 0 ... 1)
+    let drive = colorShiftDrive(controls: controls)
+    let attack = Float(controls.attackStrength).clamped(to: 0 ... 1)
+    let analysis = colorShiftExcitementEvidence(
+        controls: controls,
+        mode: mode,
+        previousPitchPhase: state.lastPitchPhase
+    )
+
+    var rawEvidence = analysis.evidence
+    if controls.isAttack, controls.attackID > 0, controls.attackID != state.lastAttackID {
+        let attackCue = ((Float(controls.highBandEnergy) - Float(controls.lowBandEnergy)) * 0.84) + ((Float(controls.midBandEnergy) - 0.5) * 0.22)
+        rawEvidence += attackCue * (0.12 + (attack * 0.26))
+    }
+
+    let alpha = 1 - exp(-(deltaTime * mix(2.2, 8.4, response)))
+    let smoothedEvidence = state.smoothedEvidence + ((rawEvidence - state.smoothedEvidence) * alpha)
+
+    var next = state
+    next.smoothedEvidence = smoothedEvidence
+    next.lastPitchPhase = analysis.nextPitchPhase
+    if controls.attackID > 0 {
+        next.lastAttackID = controls.attackID
+    }
+
+    next.cooldownRemaining = max(0, state.cooldownRemaining - deltaTime)
+
+    let threshold = mix(0.30, 0.16, response) * mix(1.06, 0.82, drive)
+    let desiredSign: Float
+    if smoothedEvidence >= threshold {
+        desiredSign = 1
+    } else if smoothedEvidence <= -threshold {
+        desiredSign = -1
+    } else {
+        desiredSign = 0
+    }
+
+    if desiredSign == 0 || desiredSign == state.directionSign {
+        next.candidateSign = 0
+        next.candidateElapsed = 0
+        return next
+    }
+
+    if state.candidateSign != desiredSign {
+        next.candidateSign = desiredSign
+        next.candidateElapsed = deltaTime
+    } else {
+        next.candidateElapsed = state.candidateElapsed + deltaTime
+    }
+
+    let dwell = mix(0.16, 0.08, response)
+    let cooldown = mix(0.22, 0.10, response)
+    guard next.cooldownRemaining <= 0, next.candidateElapsed >= dwell else {
+        return next
+    }
+
+    next.directionSign = desiredSign
+    next.candidateSign = 0
+    next.candidateElapsed = 0
+    next.cooldownRemaining = cooldown
+    return next
 }
 
 func colorShiftDrive(controls: RendererControlState) -> Float {
@@ -4089,6 +4493,118 @@ private func hueLerp(from: Float, to: Float, t: Float) -> Float {
     return wrappedHue(from + (shortestHueDelta(from: from, to: to) * clampedT))
 }
 
+private func colorShiftHueInsideArcContains(
+    hue: Float,
+    minHue: Float,
+    maxHue: Float
+) -> Bool {
+    let clampedMin = min(max(minHue, 0), 1)
+    let clampedMax = min(max(maxHue, 0), 1)
+    if abs(clampedMax - clampedMin) >= 0.999 {
+        return true
+    }
+
+    let normalizedHue = wrappedHue(hue)
+    let normalizedMin = wrappedHue(clampedMin)
+    let normalizedMax = wrappedHue(clampedMax)
+    if normalizedMin <= normalizedMax {
+        return normalizedHue >= normalizedMin && normalizedHue <= normalizedMax
+    }
+    return normalizedHue >= normalizedMin || normalizedHue <= normalizedMax
+}
+
+private func colorShiftInsideArcWidth(minHue: Float, maxHue: Float) -> Float {
+    let clampedMin = min(max(minHue, 0), 1)
+    let clampedMax = min(max(maxHue, 0), 1)
+    if abs(clampedMax - clampedMin) >= 0.999 {
+        return 1
+    }
+    return wrappedHue(clampedMax - clampedMin)
+}
+
+func colorShiftSelectedArc(
+    minHue: Float,
+    maxHue: Float,
+    outside: Bool
+) -> (start: Float, width: Float) {
+    let clampedMin = min(max(minHue, 0), 1)
+    let clampedMax = min(max(maxHue, 0), 1)
+    let insideWidth = colorShiftInsideArcWidth(minHue: clampedMin, maxHue: clampedMax)
+    if outside {
+        return (wrappedHue(clampedMax), max(1 - insideWidth, 0))
+    }
+    return (wrappedHue(clampedMin), insideWidth)
+}
+
+func colorShiftCenterHue(controls: RendererControlState) -> Float {
+    let bounds = colorShiftEffectiveHueBounds(controls: controls)
+    let selectedArc = colorShiftSelectedArc(
+        minHue: bounds.min,
+        maxHue: bounds.max,
+        outside: controls.colorHueOutside
+    )
+    return wrappedHue(selectedArc.start + (selectedArc.width * 0.5))
+}
+
+func colorShiftMappedHueTarget(
+    targetHue: Float,
+    controls: RendererControlState
+) -> Float {
+    let phase = wrappedHue(targetHue)
+    let bounds = colorShiftEffectiveHueBounds(controls: controls)
+    let selectedArc = colorShiftSelectedArc(
+        minHue: bounds.min,
+        maxHue: bounds.max,
+        outside: controls.colorHueOutside
+    )
+    let selectedStart = selectedArc.start
+    let selectedWidth = selectedArc.width
+
+    if selectedWidth <= 0.0005 {
+        return selectedStart
+    }
+    return wrappedHue(selectedStart + (phase * selectedWidth))
+}
+
+func colorShiftClampedHueTarget(
+    targetHue: Float,
+    controls: RendererControlState,
+    featherWidth: Float = 0.024
+) -> Float {
+    let hue = wrappedHue(targetHue)
+    let bounds = colorShiftEffectiveHueBounds(controls: controls)
+    let minHue = bounds.min
+    let maxHue = bounds.max
+
+    let isInside = colorShiftHueInsideArcContains(hue: hue, minHue: minHue, maxHue: maxHue)
+    let isAllowed = controls.colorHueOutside ? !isInside : isInside
+    if isAllowed {
+        return hue
+    }
+
+    let boundaryA = wrappedHue(minHue)
+    let boundaryB = wrappedHue(maxHue)
+    let distanceToA = abs(shortestHueDelta(from: hue, to: boundaryA))
+    let distanceToB = abs(shortestHueDelta(from: hue, to: boundaryB))
+    let projectedBoundary: Float
+    let projectedDistance: Float
+    if distanceToA <= distanceToB {
+        projectedBoundary = boundaryA
+        projectedDistance = distanceToA
+    } else {
+        projectedBoundary = boundaryB
+        projectedDistance = distanceToB
+    }
+
+    let safeFeatherWidth = max(featherWidth, 0.0001)
+    if projectedDistance >= safeFeatherWidth {
+        return projectedBoundary
+    }
+
+    let blend = projectedDistance / safeFeatherWidth
+    return hueLerp(from: projectedBoundary, to: hue, t: blend)
+}
+
 private func colorShiftSpectralFallbackHue(controls: RendererControlState, currentHue: Float) -> Float {
     let low = Float(controls.lowBandEnergy)
     let mid = Float(controls.midBandEnergy)
@@ -4107,6 +4623,87 @@ private func colorShiftSpectralFallbackHue(controls: RendererControlState, curre
     let liveEnergy = colorShiftDrive(controls: controls)
     let steer = mix(0.02, 0.20, Float(controls.motion)) * min(max(liveEnergy * 1.35, 0), 1)
     return hueLerp(from: currentHue, to: spectralHue, t: steer)
+}
+
+func advanceColorShiftPWMPhase(
+    currentPhase: Float,
+    deltaTime: Float,
+    controls: RendererControlState,
+    activityThreshold: Float = 0.08
+) -> Float {
+    guard deltaTime > 0 else { return wrappedHue(currentPhase) }
+    let hasStablePitch = controls.stablePitchClass != nil
+    let drive = colorShiftDrive(controls: controls)
+    if !hasStablePitch, drive <= activityThreshold {
+        return wrappedHue(currentPhase)
+    }
+
+    let response = Float(controls.motion).clamped(to: 0 ... 1)
+    let confidence = Float(controls.pitchConfidence).clamped(to: 0 ... 1)
+    let attack = Float(controls.attackStrength).clamped(to: 0 ... 1)
+
+    let baseHz = mix(0.18, 5.40, response)
+    let driveScale = mix(0.28, 1.60, drive)
+    let confidenceScale = mix(0.86, 1.20, confidence)
+    let attackScale = 1 + (attack * 0.28)
+    let hz = baseHz * driveScale * confidenceScale * attackScale
+    return wrappedHue(currentPhase + (hz * deltaTime))
+}
+
+func colorShiftPWMHueTarget(
+    pwmPhase: Float,
+    controls: RendererControlState,
+    directionSign: Float = 1
+) -> Float {
+    let bounds = colorShiftEffectiveHueBounds(controls: controls)
+    let selectedArc = colorShiftSelectedArc(
+        minHue: bounds.min,
+        maxHue: bounds.max,
+        outside: controls.colorHueOutside
+    )
+    let arcWidth = selectedArc.width
+    let centerHue = wrappedHue(selectedArc.start + (arcWidth * 0.5))
+
+    let drive = colorShiftDrive(controls: controls)
+    let response = Float(controls.motion).clamped(to: 0 ... 1)
+    let confidence = Float(controls.pitchConfidence).clamped(to: 0 ... 1)
+    let direction = directionSign >= 0 ? Float(1) : Float(-1)
+
+    let low = Float(controls.lowBandEnergy)
+    let mid = Float(controls.midBandEnergy)
+    let high = Float(controls.highBandEnergy)
+    let bandSum = max(low + mid + high, 0.0001)
+    let lowMix = low / bandSum
+    let midMix = mid / bandSum
+    let highMix = high / bandSum
+
+    let dutyBias = ((midMix - lowMix) * 0.24) + ((highMix - midMix) * 0.14) + ((confidence - 0.5) * 0.10)
+    let duty = (0.5 + dutyBias).clamped(to: 0.16 ... 0.84)
+    let normalizedPhase = wrappedHue(pwmPhase)
+    let squarePulse: Float = normalizedPhase < duty ? 1 : 0
+    let sinePulse = 0.5 + (0.5 * sin((normalizedPhase * .pi * 2) + (.pi * 0.5)))
+    let pwmMix = mix(0.58, 0.90, response)
+    let pulse = mix(sinePulse, squarePulse, pwmMix)
+
+    let maxExcursion = max(0, min(arcWidth * 0.5, 0.5))
+    if maxExcursion <= 0.0001 {
+        return centerHue
+    }
+
+    let responseDepth = mix(0.08, 1.0, response)
+    let activityDepth = mix(0.32, 1.0, drive)
+    let confidenceDepth = mix(0.55, 1.0, confidence)
+    let amplitude = min(maxExcursion * responseDepth * activityDepth * confidenceDepth, maxExcursion)
+    return wrappedHue(centerHue + (direction * pulse * amplitude))
+}
+
+private func colorShiftEffectiveHueBounds(
+    controls: RendererControlState
+) -> (min: Float, max: Float) {
+    let minHue = Float(controls.colorHueMin).clamped(to: 0 ... 1)
+    let maxHue = Float(controls.colorHueMax).clamped(to: 0 ... 1)
+    let hueShift = Float(controls.colorHueShift).clamped(to: 0 ... 1)
+    return (wrappedHue(minHue + hueShift), wrappedHue(maxHue + hueShift))
 }
 
 func colorShiftHueTarget(
@@ -4133,10 +4730,23 @@ func advanceColorShiftHuePhase(
     currentHue: Float,
     deltaTime: Float,
     controls: RendererControlState,
+    pwmPhase: Float = 0,
+    directionSign: Float = 1,
     activityThreshold: Float = 0.08
 ) -> Float {
     guard deltaTime > 0 else { return currentHue }
-    let targetHue = colorShiftHueTarget(currentHue: currentHue, controls: controls, activityThreshold: activityThreshold)
+    let hasStablePitch = controls.stablePitchClass != nil
+    let drive = colorShiftDrive(controls: controls)
+    if !hasStablePitch, drive <= activityThreshold {
+        return currentHue
+    }
+
+    let pwmTargetHue = colorShiftPWMHueTarget(
+        pwmPhase: pwmPhase,
+        controls: controls,
+        directionSign: directionSign
+    )
+    let targetHue = colorShiftClampedHueTarget(targetHue: pwmTargetHue, controls: controls)
 
     let followRate =
         mix(1.6, 10.4, Float(controls.motion)) *
@@ -5238,6 +5848,47 @@ func shouldStartTunnelRelease(
     sidechainEnergy <= offThreshold && (elapsedTime - lastAboveTimestamp) >= dropoutHold
 }
 
+func tunnelSyntheticSpawnEvidence(controls: RendererControlState) -> Float {
+    let controls = controls.clamped()
+    let maxBand = Float(max(controls.lowBandEnergy, max(controls.midBandEnergy, controls.highBandEnergy)))
+    let motionEnergy = Float(controls.motion).clamped(to: 0 ... 1)
+    let evidence =
+        (Float(controls.featureAmplitude) * 0.40) +
+        (maxBand * 0.36) +
+        (Float(controls.attackStrength) * 0.24) +
+        (motionEnergy * 0.22)
+    return min(max(evidence, 0), 1)
+}
+
+func shouldTriggerTunnelSyntheticSpawn(
+    evidence: Float,
+    previousEvidence: Float,
+    elapsedTime: Float,
+    lastSpawnTime: Float,
+    threshold: Float = 0.08,
+    lowThreshold: Float = 0.04,
+    cooldown: Float = 0.16
+) -> Bool {
+    guard (elapsedTime - lastSpawnTime) >= max(cooldown, 0) else {
+        return false
+    }
+    if evidence >= threshold {
+        // Keep emitting synthetic attacks while the signal stays active so cels remain present
+        // even when detector-edge frames are missed.
+        return true
+    }
+    return evidence >= (threshold * 0.90) && previousEvidence <= lowThreshold
+}
+
+func shouldTriggerTunnelGuaranteedSpawn(
+    elapsedTime: Float,
+    lastSpawnTime: Float,
+    hasActiveShapes: Bool,
+    idleWindow: Float = 0.42
+) -> Bool {
+    !hasActiveShapes && (elapsedTime - lastSpawnTime) >= max(idleWindow, 0.12)
+}
+
 func tunnelShapeEnvelopeValue(
     age: Float,
     sustainLevel: Float,
@@ -5684,26 +6335,38 @@ fragment float4 renderer_feedback_contour_fragment(
     texture2d<float> cameraTexture [[texture(0)]],
     sampler linearSampler [[sampler(0)]]
 ) {
+    if (uniforms.colorShiftBlackout > 0u) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
     float2 uv = in.uv;
-    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
+    float2 point = centeredPoint(uv, uniforms.resolution, uniforms.centerOffset);
+    float huePhase = fract(uniforms.colorShiftHue) * (kPi * 2.0);
+    float t = uniforms.time * (0.24 + (uniforms.motion * 1.8));
+    float low = clamp(uniforms.lowBandEnergy, 0.0, 1.0);
+    float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
+    float high = clamp(uniforms.highBandEnergy, 0.0, 1.0);
 
-    float3 center = cameraTexture.sample(linearSampler, uv).rgb;
-    float3 left = cameraTexture.sample(linearSampler, uv + float2(-texel.x, 0)).rgb;
-    float3 right = cameraTexture.sample(linearSampler, uv + float2(texel.x, 0)).rgb;
-    float3 up = cameraTexture.sample(linearSampler, uv + float2(0, -texel.y)).rgb;
-    float3 down = cameraTexture.sample(linearSampler, uv + float2(0, texel.y)).rgb;
+    float3 cameraCenter = cameraTexture.sample(linearSampler, float2(0.5, 0.5)).rgb;
+    float cameraLuma = dot(cameraCenter, float3(0.299, 0.587, 0.114));
 
-    float lumaCenter = dot(center, float3(0.299, 0.587, 0.114));
-    float lumaLeft = dot(left, float3(0.299, 0.587, 0.114));
-    float lumaRight = dot(right, float3(0.299, 0.587, 0.114));
-    float lumaUp = dot(up, float3(0.299, 0.587, 0.114));
-    float lumaDown = dot(down, float3(0.299, 0.587, 0.114));
+    float2 centerA = float2(sin(t * 0.71 + huePhase), cos(t * 0.52 - huePhase)) * (0.25 + low * 0.20);
+    float2 centerB = float2(cos(t * 0.44 - huePhase * 0.5), sin(t * 0.84 + huePhase * 0.3)) * (0.32 + mid * 0.18);
+    float2 centerC = float2(sin(-t * 0.93 + huePhase * 0.2), cos(t * 0.63 + huePhase * 0.8)) * (0.39 + high * 0.16);
 
-    float gx = lumaRight - lumaLeft;
-    float gy = lumaDown - lumaUp;
-    float mag = sqrt((gx * gx) + (gy * gy));
-    float contour = smoothstep(0.11, 0.33, mag + (lumaCenter * 0.04));
-    return float4(contour, contour, contour, 1.0);
+    float blobA = smoothstep(0.34, 0.02, length(point - centerA));
+    float blobB = smoothstep(0.28, 0.02, length(point - centerB));
+    float blobC = smoothstep(0.24, 0.02, length(point - centerC));
+    float blobs = clamp((blobA * 0.62) + (blobB * 0.58) + (blobC * 0.54), 0.0, 1.0);
+
+    float bandFreq = mix(4.0, 14.0, clamp(uniforms.scale, 0.0, 1.0));
+    float bandA = 0.5 + (0.5 * sin((point.x * bandFreq) + (point.y * bandFreq * 0.72) + (t * 1.6) + huePhase));
+    float bandB = 0.5 + (0.5 * sin((length(point) * (8.0 + uniforms.diffusion * 14.0)) - (t * 1.3) + huePhase * 0.42));
+    float banding = mix(bandA, bandB, 0.44 + (high * 0.28));
+
+    float seed = max(blobs, banding * (0.30 + uniforms.diffusion * 0.42));
+    seed = clamp(seed + (uniforms.attackStrength * 0.12) + (cameraLuma * 0.08), 0.0, 1.0);
+    return float4(seed, seed, seed, 1.0);
 }
 
 fragment float4 renderer_feedback_evolve_fragment(
@@ -5714,17 +6377,27 @@ fragment float4 renderer_feedback_evolve_fragment(
     sampler linearSampler [[sampler(0)]]
 ) {
     float2 centered = in.uv - 0.5;
-    float c = cos(0.0018);
-    float s = sin(0.0018);
+    float spin = 0.0010 + (uniforms.attackStrength * 0.0034);
+    float c = cos(spin);
+    float s = sin(spin);
     float2 rotated = float2((centered.x * c) - (centered.y * s), (centered.x * s) + (centered.y * c));
-    float2 warpedUV = (rotated / 1.012) + 0.5;
+    float zoom = 1.005 + (uniforms.motion * 0.014);
+    float2 warpedUV = (rotated / zoom) + 0.5;
 
+    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
     float history = historyTexture.sample(linearSampler, warpedUV).r;
-    float contour = contourTexture.sample(linearSampler, in.uv).r;
+    float blur = 0.0;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(texel.x, 0.0)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(-texel.x, 0.0)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(0.0, texel.y)).r;
+    blur += historyTexture.sample(linearSampler, warpedUV + float2(0.0, -texel.y)).r;
+    blur *= 0.25;
 
-    float decay = 0.93;
-    float injection = contour * (0.42 + (uniforms.attackStrength * 0.20));
-    float evolved = max(history * decay, injection);
+    float contour = contourTexture.sample(linearSampler, in.uv).r;
+    float decay = 0.90 + ((1.0 - uniforms.blackFloor) * 0.06);
+    float injection = contour * (0.40 + (uniforms.attackStrength * 0.35));
+    float evolved = max(mix(history, blur, 0.24), injection);
+    evolved = clamp((evolved * decay) + (contour * 0.06), 0.0, 1.0);
     return float4(evolved, evolved, evolved, 1.0);
 }
 
@@ -5738,12 +6411,36 @@ fragment float4 renderer_feedback_present_fragment(
         return float4(0.0, 0.0, 0.0, 1.0);
     }
 
-    float field = feedbackTexture.sample(linearSampler, in.uv).r;
+    float2 uv = in.uv;
+    float field = feedbackTexture.sample(linearSampler, uv).r;
+    float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
+    float gradX = feedbackTexture.sample(linearSampler, uv + float2(texel.x, 0.0)).r
+        - feedbackTexture.sample(linearSampler, uv + float2(-texel.x, 0.0)).r;
+    float gradY = feedbackTexture.sample(linearSampler, uv + float2(0.0, texel.y)).r
+        - feedbackTexture.sample(linearSampler, uv + float2(0.0, -texel.y)).r;
+    float gradient = min(length(float2(gradX, gradY)) * 3.5, 1.0);
+
     float hue = fract(uniforms.colorShiftHue);
     float saturation = clamp(uniforms.colorShiftSaturation, 0.0, 1.0);
-    float3 tint = hsvToRgb(float3(hue, saturation, 0.90));
-    float value = smoothstep(0.03, 0.95, field);
-    return float4(tint * value, 1.0);
+    float hueB = fract(hue + 0.08 + (uniforms.midBandEnergy * 0.12) - (uniforms.lowBandEnergy * 0.05));
+    float hueC = fract(hue - 0.09 + (uniforms.highBandEnergy * 0.15));
+
+    float3 colorA = hsvToRgb(float3(hue, saturation, 0.92));
+    float3 colorB = hsvToRgb(float3(hueB, clamp(saturation * 0.92, 0.0, 1.0), 0.96));
+    float3 colorC = hsvToRgb(float3(hueC, clamp(saturation * 0.86, 0.0, 1.0), 0.88));
+
+    float blend = smoothstep(0.12, 0.92, field);
+    float ribbon = 0.5 + (0.5 * sin((field * (12.0 + uniforms.scale * 20.0)) + (uniforms.time * (0.6 + uniforms.motion * 2.0))));
+    float3 color = mix(colorA, colorB, blend);
+    color = mix(color, colorC, ribbon * (0.22 + uniforms.diffusion * 0.38));
+
+    float edgeGlow = smoothstep(0.08, 0.35, gradient) * (0.14 + uniforms.attackStrength * 0.16);
+    color += edgeGlow;
+
+    float value = smoothstep(0.04, 0.98, field);
+    color *= mix(0.28, 1.0, value);
+    color = max(color - (uniforms.blackFloor * 0.18), float3(0.0));
+    return float4(color, 1.0);
 }
 
 fragment float4 renderer_prism_facet_field_fragment(
@@ -5930,8 +6627,8 @@ fragment float4 renderer_tunnel_field_fragment(
     float wallMask = smoothstep(1.34, 0.10, squareRadius);
     float centerWell = exp(-pow(centerRadius * 9.0, 2.0));
 
-    float energy = ((ringShell * 0.46) + (latticeLines * 0.66) + (fog * 0.20)) * wallMask;
-    energy *= mix(0.74, 1.20, flow);
+    float energy = ((ringShell * 0.24) + (latticeLines * 0.30) + (fog * 0.10)) * wallMask;
+    energy *= mix(0.62, 0.94, flow);
     energy = max(0.0, energy - (centerWell * 0.18));
 
     float hue = fract((latticeUV.x * 0.07) + (latticeUV.y * 0.05) + (depthPhase * 0.03));
@@ -5939,8 +6636,8 @@ fragment float4 renderer_tunnel_field_fragment(
     float3 baseA = float3(0.004, 0.008, 0.016);
     float3 baseB = float3(0.016, 0.028, 0.050);
     float3 base = mix(baseA, baseB, fog);
-    float3 color = (base * (0.40 + (0.60 * fog))) + (prism * energy * 0.62);
-    color += float3(0.0015, 0.0026, 0.0042) * (0.20 + (uniforms.featureAmplitude * 0.80));
+    float3 color = (base * (0.26 + (0.42 * fog))) + (prism * energy * 0.34);
+    color += float3(0.0010, 0.0018, 0.0030) * (0.12 + (uniforms.featureAmplitude * 0.58));
     return float4(color, max(energy, 0.0001));
 }
 
@@ -5972,7 +6669,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
         float perspective = 1.0 / (0.35 + depth);
         float2 projected = lane * perspective;
-        float size = scale * perspective * mix(0.12, 0.34, uniforms.tunnelShapeScale);
+        float size = scale * perspective * mix(0.50, 1.20, uniforms.tunnelShapeScale);
         float2 local = (point - projected) / max(size, 0.0001);
 
         float axisAngle = atan2(shape.axisDecaySustainRelease.y, shape.axisDecaySustainRelease.x);
@@ -5984,25 +6681,26 @@ fragment float4 renderer_tunnel_shapes_fragment(
         float variant = shape.forwardHueVariantSeed.z;
         float distance;
         if (variant < 0.5) {
-            distance = sdBox2D(rotated, float2(0.48, 0.30));
+            distance = sdBox2D(rotated, float2(0.62, 0.38));
         } else if (variant < 1.5) {
-            distance = sdDiamond2D(rotated, float2(0.74, 0.74));
+            distance = sdDiamond2D(rotated, float2(0.88, 0.88));
         } else {
-            distance = sdSlab2D(rotated, 0.52, 0.22);
+            distance = sdSlab2D(rotated, 0.68, 0.28);
         }
 
-        float edgeGlow = exp(-pow(max(distance, 0.0) * 5.2, 2.0));
-        float core = smoothstep(0.16, -0.26, distance) * 0.56;
-        float outline = smoothstep(0.085, 0.0, abs(distance)) * 0.72;
+        float edgeGlow = exp(-pow(max(distance, 0.0) * 2.6, 2.0));
+        float core = smoothstep(0.34, -0.46, distance) * 1.05;
+        float outline = smoothstep(0.24, 0.0, abs(distance)) * 1.30;
         float releaseMix = shape.axisDecaySustainRelease.w;
         float releaseDamp = mix(1.0, 0.20, releaseMix);
-        float depthFade = smoothstep(7.2, 0.25, depth);
+        float depthFade = smoothstep(9.0, 0.08, depth);
         float localEnergy = (edgeGlow + core + outline) * envelope * releaseDamp * depthFade;
-        localEnergy *= (0.58 + (uniforms.attackStrength * 0.42));
+        localEnergy *= (1.25 + (uniforms.attackStrength * 0.95));
 
         float hue = fract(shape.forwardHueVariantSeed.y + (shape.forwardHueVariantSeed.x * 0.03) + (local.x * 0.06));
         float3 shapeColor = spectralPalette(hue);
-        color += shapeColor * localEnergy;
+        float3 energizedColor = mix(shapeColor, float3(1.0), 0.26);
+        color += energizedColor * localEnergy;
         energy += localEnergy;
     }
 
@@ -6053,7 +6751,7 @@ fragment float4 renderer_tunnel_composite_fragment(
         split += rgb * (1.0 - t);
     }
 
-    float3 composed = (field * 0.58) + (shapes * 1.15) + (trails * 0.78) + (split * 0.52);
+    float3 composed = (field * 0.35) + (shapes * 2.55) + (trails * 1.35) + (split * 1.12);
     float ambientPhase = 0.5 + 0.5 * sin((uniforms.time * 0.30) + (point.x * 2.6) + (point.y * 2.1));
     float3 ambient = mix(float3(0.0012, 0.0018, 0.0030), float3(0.0065, 0.0105, 0.0140), ambientPhase);
     composed += ambient;

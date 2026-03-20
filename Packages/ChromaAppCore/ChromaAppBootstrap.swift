@@ -54,22 +54,31 @@ public struct ChromaAppBootstrap {
         let parameterStore = ParameterStore(descriptors: ParameterCatalog.descriptors)
         let inputCalibrationService = PlaceholderInputCalibrationService()
         let renderCoordinator = DefaultRenderCoordinator()
-        let presetService = PlaceholderPresetService(
-            storedPresets: [
-                Preset(
-                    name: "Stage Color",
-                    modeID: .colorShift,
-                    values: [
-                        ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.84)),
-                        ScopedParameterValue(parameterID: "mode.colorShift.hueResponse", scope: .mode(.colorShift), value: .scalar(0.72)),
-                        ScopedParameterValue(parameterID: "mode.colorShift.hueRange", scope: .mode(.colorShift), value: .scalar(0.78)),
-                    ]
-                ),
-            ]
-        )
-        let recorderService = PlaceholderRecorderService()
+        let presetService: PresetService = {
+            let seededPresets = Self.modeStarterSeedPresets
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderPresetService(storedPresets: seededPresets)
+            }
+#endif
+            return DiskPresetService(seedPresets: seededPresets)
+        }()
+        let recorderService: RecorderService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderRecorderService()
+            }
+#endif
+            return LiveRecorderService(audioSamplePublisher: audioInputService.samplePublisher)
+        }()
         let diagnosticsService = PlaceholderDiagnosticsService()
-        let externalDisplayCoordinator = PlaceholderExternalDisplayCoordinator()
+        let externalDisplayCoordinator: ExternalDisplayCoordinator = {
+#if targetEnvironment(macCatalyst)
+            return PlaceholderExternalDisplayCoordinator()
+#else
+            return LiveExternalDisplayCoordinator()
+#endif
+        }()
         let setlistService = PlaceholderSetlistService()
         let presets = presetService.loadPresets()
         let performanceSets = setlistService.loadSets()
@@ -92,5 +101,95 @@ public struct ChromaAppBootstrap {
         )
         let appViewModel = AppViewModel(router: router)
         return ChromaAppBootstrap(appViewModel: appViewModel, sessionViewModel: sessionViewModel)
+    }
+
+    private static var modeStarterSeedPresets: [Preset] {
+        [
+            stageColorSeedPreset,
+            prismNocturneSeedPreset,
+            tunnelDriveSeedPreset,
+            fractalAuroraSeedPreset,
+            mandelbrotBoundarySeedPreset,
+        ]
+    }
+
+    private static var stageColorSeedPreset: Preset {
+        Preset(
+            name: "Stage Color",
+            modeID: .colorShift,
+            values: [
+                ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.84)),
+                ScopedParameterValue(parameterID: "response.smoothing", scope: .global, value: .scalar(0.36)),
+                ScopedParameterValue(parameterID: "mode.colorShift.hueResponse", scope: .mode(.colorShift), value: .scalar(0.72)),
+                ScopedParameterValue(
+                    parameterID: "mode.colorShift.hueRange",
+                    scope: .mode(.colorShift),
+                    value: .hueRange(min: 0.13, max: 0.87, outside: false)
+                ),
+                ScopedParameterValue(parameterID: "mode.colorShift.excitementMode", scope: .mode(.colorShift), value: .scalar(0.0)),
+            ]
+        )
+    }
+
+    private static var prismNocturneSeedPreset: Preset {
+        Preset(
+            name: "Prism Nocturne",
+            modeID: .prismField,
+            values: [
+                ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.82)),
+                ScopedParameterValue(parameterID: "response.smoothing", scope: .global, value: .scalar(0.34)),
+                ScopedParameterValue(parameterID: "output.blackFloor", scope: .global, value: .scalar(0.90)),
+                ScopedParameterValue(parameterID: "mode.prismField.facetDensity", scope: .mode(.prismField), value: .scalar(0.68)),
+                ScopedParameterValue(parameterID: "mode.prismField.dispersion", scope: .mode(.prismField), value: .scalar(0.74)),
+            ]
+        )
+    }
+
+    private static var tunnelDriveSeedPreset: Preset {
+        Preset(
+            name: "Tunnel Drive",
+            modeID: .tunnelCels,
+            values: [
+                ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.88)),
+                ScopedParameterValue(parameterID: "response.smoothing", scope: .global, value: .scalar(0.28)),
+                ScopedParameterValue(parameterID: "output.blackFloor", scope: .global, value: .scalar(0.87)),
+                ScopedParameterValue(parameterID: "mode.tunnelCels.shapeScale", scope: .mode(.tunnelCels), value: .scalar(0.62)),
+                ScopedParameterValue(parameterID: "mode.tunnelCels.depthSpeed", scope: .mode(.tunnelCels), value: .scalar(0.74)),
+                ScopedParameterValue(parameterID: "mode.tunnelCels.releaseTail", scope: .mode(.tunnelCels), value: .scalar(0.52)),
+                ScopedParameterValue(parameterID: "mode.tunnelCels.variant", scope: .mode(.tunnelCels), value: .scalar(1.0)),
+            ]
+        )
+    }
+
+    private static var fractalAuroraSeedPreset: Preset {
+        Preset(
+            name: "Fractal Aurora",
+            modeID: .fractalCaustics,
+            values: [
+                ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.76)),
+                ScopedParameterValue(parameterID: "response.smoothing", scope: .global, value: .scalar(0.40)),
+                ScopedParameterValue(parameterID: "output.blackFloor", scope: .global, value: .scalar(0.91)),
+                ScopedParameterValue(parameterID: "mode.fractalCaustics.detail", scope: .mode(.fractalCaustics), value: .scalar(0.73)),
+                ScopedParameterValue(parameterID: "mode.fractalCaustics.flowRate", scope: .mode(.fractalCaustics), value: .scalar(0.49)),
+                ScopedParameterValue(parameterID: "mode.fractalCaustics.attackBloom", scope: .mode(.fractalCaustics), value: .scalar(0.69)),
+                ScopedParameterValue(parameterID: "mode.fractalCaustics.paletteVariant", scope: .mode(.fractalCaustics), value: .scalar(3.0)),
+            ]
+        )
+    }
+
+    private static var mandelbrotBoundarySeedPreset: Preset {
+        Preset(
+            name: "Mandelbrot Boundary Run",
+            modeID: .riemannCorridor,
+            values: [
+                ScopedParameterValue(parameterID: "response.inputGain", scope: .global, value: .scalar(0.72)),
+                ScopedParameterValue(parameterID: "response.smoothing", scope: .global, value: .scalar(0.33)),
+                ScopedParameterValue(parameterID: "output.blackFloor", scope: .global, value: .scalar(0.93)),
+                ScopedParameterValue(parameterID: "mode.riemannCorridor.detail", scope: .mode(.riemannCorridor), value: .scalar(0.82)),
+                ScopedParameterValue(parameterID: "mode.riemannCorridor.flowRate", scope: .mode(.riemannCorridor), value: .scalar(0.44)),
+                ScopedParameterValue(parameterID: "mode.riemannCorridor.zeroBloom", scope: .mode(.riemannCorridor), value: .scalar(0.36)),
+                ScopedParameterValue(parameterID: "mode.riemannCorridor.paletteVariant", scope: .mode(.riemannCorridor), value: .scalar(4.0)),
+            ]
+        )
     }
 }

@@ -47,6 +47,8 @@ final class AudioPipelineCoreTests: XCTestCase {
         let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
         store.setValue(.scalar(0.68), for: "mode.colorShift.hueResponse", scope: .mode(.colorShift))
         store.setValue(.scalar(0.74), for: "mode.colorShift.hueRange", scope: .mode(.colorShift))
+        store.setValue(.scalar(0.23), for: "mode.colorShift.hueCenterTrim", scope: .mode(.colorShift))
+        store.setValue(.scalar(1.7), for: "mode.colorShift.excitementMode", scope: .mode(.colorShift))
 
         let mapper = RendererSurfaceStateMapper()
         var session = ChromaSession.initial()
@@ -78,6 +80,11 @@ final class AudioPipelineCoreTests: XCTestCase {
         XCTAssertEqual(mapped.controls.stablePitchClass, 4)
         XCTAssertEqual(mapped.controls.stablePitchCents, -7.5, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.scale, 0.74, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.colorHueMin, 0.13, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.colorHueMax, 0.87, accuracy: 0.0001)
+        XCTAssertFalse(mapped.controls.colorHueOutside)
+        XCTAssertEqual(mapped.controls.colorHueShift, 0.23, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.colorShiftExcitementMode, 2.0, accuracy: 0.0001)
         XCTAssertGreaterThan(mapped.controls.motion, 0.68)
     }
 
@@ -139,6 +146,8 @@ final class AudioPipelineCoreTests: XCTestCase {
         XCTAssertEqual(mapped.controls.tunnelVariant, 2.0, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.scale, 0.67, accuracy: 0.0001)
         XCTAssertGreaterThan(mapped.controls.motion, 0.41)
+        XCTAssertEqual(mapped.controls.centerOffset.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.centerOffset.y, 0, accuracy: 0.0001)
     }
 
     func testRendererSurfaceStateMapperRoutesFractalCausticsControls() {

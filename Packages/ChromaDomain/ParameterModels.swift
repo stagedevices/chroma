@@ -16,6 +16,7 @@ public enum ParameterTier: String, CaseIterable, Codable {
 public enum ParameterControlStyle: String, Codable {
     case slider
     case toggle
+    case hueRange
 }
 
 public struct ParameterScope: Codable, Hashable, Equatable {
@@ -42,16 +43,21 @@ public struct ParameterScope: Codable, Hashable, Equatable {
 public enum ParameterValue: Codable, Equatable, Hashable {
     case scalar(Double)
     case toggle(Bool)
+    case hueRange(min: Double, max: Double, outside: Bool)
 
     private enum CodingKeys: String, CodingKey {
         case type
         case scalar
         case toggle
+        case hueRangeMin
+        case hueRangeMax
+        case hueRangeOutside
     }
 
     private enum ValueType: String, Codable {
         case scalar
         case toggle
+        case hueRange
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +68,12 @@ public enum ParameterValue: Codable, Equatable, Hashable {
             self = .scalar(try container.decode(Double.self, forKey: .scalar))
         case .toggle:
             self = .toggle(try container.decode(Bool.self, forKey: .toggle))
+        case .hueRange:
+            self = .hueRange(
+                min: try container.decode(Double.self, forKey: .hueRangeMin),
+                max: try container.decode(Double.self, forKey: .hueRangeMax),
+                outside: try container.decode(Bool.self, forKey: .hueRangeOutside)
+            )
         }
     }
 
@@ -74,6 +86,11 @@ public enum ParameterValue: Codable, Equatable, Hashable {
         case .toggle(let value):
             try container.encode(ValueType.toggle, forKey: .type)
             try container.encode(value, forKey: .toggle)
+        case .hueRange(let min, let max, let outside):
+            try container.encode(ValueType.hueRange, forKey: .type)
+            try container.encode(min, forKey: .hueRangeMin)
+            try container.encode(max, forKey: .hueRangeMax)
+            try container.encode(outside, forKey: .hueRangeOutside)
         }
     }
 
@@ -85,6 +102,11 @@ public enum ParameterValue: Codable, Equatable, Hashable {
     public var toggleValue: Bool? {
         guard case .toggle(let value) = self else { return nil }
         return value
+    }
+
+    public var hueRangeValue: (min: Double, max: Double, outside: Bool)? {
+        guard case .hueRange(let min, let max, let outside) = self else { return nil }
+        return (min, max, outside)
     }
 }
 

@@ -33,23 +33,42 @@ final class ParameterStoreTests: XCTestCase {
         let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
         let hueResponse = store.descriptor(for: "mode.colorShift.hueResponse")
         let hueRange = store.descriptor(for: "mode.colorShift.hueRange")
+        let excitementMode = store.descriptor(for: "mode.colorShift.excitementMode")
 
         XCTAssertNotNil(hueResponse)
         XCTAssertNotNil(hueRange)
-        guard let hueResponse, let hueRange else {
+        XCTAssertNotNil(excitementMode)
+        guard let hueResponse, let hueRange, let excitementMode else {
             return XCTFail("Expected color shift parameter descriptors")
         }
 
         XCTAssertEqual(hueResponse.scope, .mode(.colorShift))
         XCTAssertEqual(hueRange.scope, .mode(.colorShift))
+        XCTAssertEqual(excitementMode.scope, .mode(.colorShift))
 
         XCTAssertEqual(hueResponse.minimumValue ?? -1, 0, accuracy: 0.0001)
         XCTAssertEqual(hueResponse.maximumValue ?? -1, 1, accuracy: 0.0001)
         XCTAssertEqual(hueRange.minimumValue ?? -1, 0, accuracy: 0.0001)
         XCTAssertEqual(hueRange.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(excitementMode.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(excitementMode.maximumValue ?? -1, 2, accuracy: 0.0001)
+        XCTAssertEqual(hueRange.controlStyle, .hueRange)
 
         XCTAssertEqual(hueResponse.defaultValue.scalarValue ?? -1, 0.66, accuracy: 0.0001)
-        XCTAssertEqual(hueRange.defaultValue.scalarValue ?? -1, 0.74, accuracy: 0.0001)
+        XCTAssertEqual(hueRange.defaultValue.hueRangeValue?.min ?? -1, 0.13, accuracy: 0.0001)
+        XCTAssertEqual(hueRange.defaultValue.hueRangeValue?.max ?? -1, 0.87, accuracy: 0.0001)
+        XCTAssertEqual(hueRange.defaultValue.hueRangeValue?.outside, false)
+        XCTAssertEqual(excitementMode.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
+    }
+
+    func testColorShiftHueRangeLegacyScalarCoercesToRange() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        store.setValue(.scalar(0.74), for: "mode.colorShift.hueRange", scope: .mode(.colorShift))
+
+        let value = store.value(for: "mode.colorShift.hueRange", scope: .mode(.colorShift))
+        XCTAssertEqual(value?.hueRangeValue?.min ?? -1, 0.13, accuracy: 0.0001)
+        XCTAssertEqual(value?.hueRangeValue?.max ?? -1, 0.87, accuracy: 0.0001)
+        XCTAssertEqual(value?.hueRangeValue?.outside, false)
     }
 
     func testColorShiftControlListsExcludeBlackFloorButPrismKeepsIt() {
@@ -66,6 +85,8 @@ final class ParameterStoreTests: XCTestCase {
 
         XCTAssertFalse(colorShiftQuick.contains("output.blackFloor"))
         XCTAssertFalse(colorShiftSurface.contains("output.blackFloor"))
+        XCTAssertFalse(colorShiftQuick.contains("mode.colorShift.excitementMode"))
+        XCTAssertTrue(colorShiftSurface.contains("mode.colorShift.excitementMode"))
         XCTAssertTrue(prismQuick.contains("mode.prismField.facetDensity"))
         XCTAssertTrue(prismQuick.contains("mode.prismField.dispersion"))
         XCTAssertTrue(prismSurface.contains("mode.prismField.facetDensity"))

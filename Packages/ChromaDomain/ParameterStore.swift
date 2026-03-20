@@ -1,6 +1,8 @@
 import Foundation
 
 public final class ParameterStore {
+    private static let colorShiftHueRangeParameterID = "mode.colorShift.hueRange"
+
     private let descriptorsByID: [String: ParameterDescriptor]
     private var globalValues: [String: ParameterValue]
     private var modeValues: [VisualModeID: [String: ParameterValue]]
@@ -36,23 +38,32 @@ public final class ParameterStore {
         guard let descriptor = descriptorsByID[parameterID] else { return nil }
         switch (descriptor.scope.kind, scope.kind) {
         case (.global, .global):
-            return globalValues[parameterID] ?? descriptor.defaultValue
+            let value = globalValues[parameterID] ?? descriptor.defaultValue
+            return coercedValue(value, for: descriptor)
         case (.mode, .mode):
             guard descriptor.scope.modeID == scope.modeID, let modeID = scope.modeID else { return nil }
-            return modeValues[modeID]?[parameterID] ?? descriptor.defaultValue
+            let value = modeValues[modeID]?[parameterID] ?? descriptor.defaultValue
+            return coercedValue(value, for: descriptor)
         default:
             return nil
         }
     }
 
     public func setValue(_ value: ParameterValue, for parameterID: String, scope: ParameterScope) {
+        let normalizedValue: ParameterValue
+        if let descriptor = descriptorsByID[parameterID] {
+            normalizedValue = coercedValue(value, for: descriptor)
+        } else {
+            normalizedValue = value
+        }
+
         switch scope.kind {
         case .global:
-            globalValues[parameterID] = value
+            globalValues[parameterID] = normalizedValue
         case .mode:
             guard let modeID = scope.modeID else { return }
             var modeDictionary = modeValues[modeID] ?? [:]
-            modeDictionary[parameterID] = value
+            modeDictionary[parameterID] = normalizedValue
             modeValues[modeID] = modeDictionary
         }
     }
@@ -84,11 +95,43 @@ public final class ParameterStore {
         }
     }
 
-    public func load(_ values: [ScopedParameterValue]) {
-        globalValues = [:]
-        modeValues = [:]
+    public func apply(_ values: [ScopedParameterValue]) {
         values.forEach { assignment in
             setValue(assignment.value, for: assignment.parameterID, scope: assignment.scope)
         }
+    }
+
+    public func load(_ values: [ScopedParameterValue]) {
+        globalValues = [:]
+        modeValues = [:]
+        apply(values)
+    }
+
+    private func coercedValue(_ value: ParameterValue, for descriptor: ParameterDescriptor) -> ParameterValue {
+        guard descriptor.id == Self.colorShiftHueRangeParameterID else {
+            return value
+        }
+
+        switch value {
+        case .hueRange(let min, let max, let outside):
+            return .hueRange(
+                min: min.clamped(to: 0 ... 1),
+                max: max.clamped(to: 0 ... 1),
+                outside: outside
+            )
+        case .scalar(let span):
+            let clampedSpan = span.clamped(to: 0 ... 1)
+            let min = (0.5 - (clampedSpan * 0.5)).clamped(to: 0 ... 1)
+            let max = (0.5 + (clampedSpan * 0.5)).clamped(to: 0 ... 1)
+            return .hueRange(min: min, max: max, outside: false)
+        default:
+            return descriptor.defaultValue
+        }
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

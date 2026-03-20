@@ -28,6 +28,11 @@ struct ChromaIOSApp: App {
                     .font(ChromaTypography.body)
             }
         }
+#if targetEnvironment(macCatalyst)
+        .commands {
+            ChromaCommandMenu(appViewModel: appViewModel)
+        }
+#endif
     }
 
     private static func configureGlobalTypography() {
@@ -41,3 +46,40 @@ struct ChromaIOSApp: App {
 #endif
     }
 }
+
+#if targetEnvironment(macCatalyst)
+private struct ChromaCommandMenu: Commands {
+    @ObservedObject var appViewModel: AppViewModel
+
+    var body: some Commands {
+        CommandMenu("Chroma") {
+            Button("Modes") {
+                appViewModel.presentModePicker()
+            }
+            .keyboardShortcut("m", modifiers: [.command])
+
+            Button("Presets") {
+                appViewModel.presentPresetBrowser()
+            }
+            .keyboardShortcut("p", modifiers: [.command])
+
+            Button("Export") {
+                appViewModel.presentRecorderExport()
+            }
+            .keyboardShortcut("e", modifiers: [.command])
+
+            Button("Settings") {
+                appViewModel.presentSettingsDiagnostics()
+            }
+            .keyboardShortcut(",", modifiers: [.command])
+
+            Divider()
+
+            Button(appViewModel.isPerformanceModeEnabled ? "Exit Fullscreen" : "Enter Fullscreen") {
+                appViewModel.togglePerformanceMode()
+            }
+            .keyboardShortcut("f", modifiers: [.command, .control])
+        }
+    }
+}
+#endif

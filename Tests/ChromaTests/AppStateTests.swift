@@ -29,6 +29,18 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(appSheetDetentStyle(for: .riemannPalettePicker), .mediumOnly)
     }
 
+    func testSheetPresentationStyleMatchesDestinationContract() {
+        XCTAssertEqual(appSheetPresentationStyle(for: .modePicker), .sheet)
+        XCTAssertEqual(appSheetPresentationStyle(for: .presetBrowser), .sheet)
+        XCTAssertEqual(appSheetPresentationStyle(for: .recorderExport), .sheet)
+        XCTAssertEqual(appSheetPresentationStyle(for: .settingsDiagnostics), .sheet)
+
+        XCTAssertEqual(appSheetPresentationStyle(for: .feedbackSetup), .popover)
+        XCTAssertEqual(appSheetPresentationStyle(for: .tunnelVariantPicker), .popover)
+        XCTAssertEqual(appSheetPresentationStyle(for: .fractalPalettePicker), .popover)
+        XCTAssertEqual(appSheetPresentationStyle(for: .riemannPalettePicker), .popover)
+    }
+
     func testAppViewModelTogglesPerformanceMode() {
         let appViewModel = AppViewModel(router: AppRouter())
         XCTAssertFalse(appViewModel.isPerformanceModeEnabled)
@@ -89,6 +101,124 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(sessionViewModel.session.activePresetName, "Color Recall")
         XCTAssertEqual(sessionViewModel.session.activeModeID, .colorShift)
         XCTAssertEqual(sessionViewModel.parameterStore.value(for: "response.inputGain", scope: .global), .scalar(0.9))
+    }
+
+    func testGlassAppearanceToggleUpdatesSessionState() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        let initialToken = sessionViewModel.appearanceTransitionToken
+        XCTAssertFalse(sessionViewModel.isLightGlassAppearance)
+
+        sessionViewModel.toggleGlassAppearanceStyle()
+        XCTAssertTrue(sessionViewModel.isLightGlassAppearance)
+        XCTAssertEqual(sessionViewModel.session.outputState.glassAppearanceStyle, .light)
+        XCTAssertNotEqual(sessionViewModel.appearanceTransitionToken, initialToken)
+
+        sessionViewModel.setGlassAppearanceStyle(.dark)
+        XCTAssertFalse(sessionViewModel.isLightGlassAppearance)
+        XCTAssertEqual(sessionViewModel.session.outputState.glassAppearanceStyle, .dark)
+    }
+
+    func testPresetsForActiveModeFiltersByModeID() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        XCTAssertEqual(sessionViewModel.session.activeModeID, .colorShift)
+        XCTAssertTrue(sessionViewModel.presetsForActiveMode.allSatisfy { $0.modeID == .colorShift })
+
+        sessionViewModel.selectMode(.prismField)
+        XCTAssertTrue(sessionViewModel.presetsForActiveMode.allSatisfy { $0.modeID == .prismField })
+    }
+
+    func testQuickSaveCapturesGlobalAndActiveModeValuesOnly() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.updateParameter(
+            sessionViewModel.parameterStore.descriptor(for: "response.inputGain")!,
+            value: .scalar(0.91)
+        )
+        sessionViewModel.updateParameter(
+            sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.hueResponse")!,
+            value: .scalar(0.33)
+        )
+        sessionViewModel.updateParameter(
+            sessionViewModel.parameterStore.descriptor(for: "mode.prismField.facetDensity")!,
+            value: .scalar(0.44)
+        )
+
+        guard let saved = sessionViewModel.quickSaveActiveModePreset() else {
+            return XCTFail("Expected quick save to return a preset")
+        }
+
+        XCTAssertEqual(saved.modeID, .colorShift)
+        XCTAssertTrue(saved.values.contains(where: { $0.scope.kind == .global && $0.parameterID == "response.inputGain" }))
+        XCTAssertTrue(saved.values.contains(where: { $0.scope == .mode(.colorShift) && $0.parameterID == "mode.colorShift.hueResponse" }))
+        XCTAssertFalse(saved.values.contains(where: { $0.scope == .mode(.prismField) && $0.parameterID == "mode.prismField.facetDensity" }))
+        XCTAssertEqual(sessionViewModel.session.activePresetID, saved.id)
+    }
+
+    func testRenameAndDeletePresetUpdateActiveMetadata() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        guard let saved = sessionViewModel.quickSaveActiveModePreset() else {
+            return XCTFail("Expected quick save preset")
+        }
+
+        sessionViewModel.renamePreset(id: saved.id, newName: "  Renamed Color  ")
+        XCTAssertTrue(sessionViewModel.presets.contains(where: { $0.id == saved.id && $0.name == "Renamed Color" }))
+        XCTAssertEqual(sessionViewModel.session.activePresetName, "Renamed Color")
+
+        sessionViewModel.deletePreset(id: saved.id)
+        XCTAssertFalse(sessionViewModel.presets.contains(where: { $0.id == saved.id }))
+        XCTAssertNil(sessionViewModel.session.activePresetID)
+        XCTAssertEqual(sessionViewModel.session.activePresetName, "Unsaved Session")
+    }
+
+    func testQuickSaveAlwaysCreatesNewPreset() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+        let initialCount = sessionViewModel.presets.count
+
+        guard let first = sessionViewModel.quickSaveActiveModePreset() else {
+            return XCTFail("Expected first quick save preset")
+        }
+        guard let second = sessionViewModel.quickSaveActiveModePreset() else {
+            return XCTFail("Expected second quick save preset")
+        }
+
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertEqual(sessionViewModel.presets.count, initialCount + 2)
+        XCTAssertEqual(sessionViewModel.session.activePresetID, second.id)
+    }
+
+    func testActivePresetModifiedStateTracksParameterChanges() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        guard let saved = sessionViewModel.quickSaveActiveModePreset() else {
+            return XCTFail("Expected quick save preset")
+        }
+
+        XCTAssertFalse(sessionViewModel.isActivePresetModified)
+        XCTAssertEqual(sessionViewModel.activePresetDisplayName, saved.name)
+
+        guard let hueResponse = sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.hueResponse") else {
+            return XCTFail("Expected hue response descriptor")
+        }
+
+        sessionViewModel.updateParameter(hueResponse, value: .scalar(0.12))
+        XCTAssertTrue(sessionViewModel.isActivePresetModified)
+        XCTAssertEqual(sessionViewModel.activePresetDisplayName, "\(saved.name) • Modified")
+
+        guard let reloaded = sessionViewModel.presets.first(where: { $0.id == saved.id }) else {
+            return XCTFail("Expected saved preset in collection")
+        }
+        sessionViewModel.applyPreset(reloaded)
+        XCTAssertFalse(sessionViewModel.isActivePresetModified)
+        XCTAssertEqual(sessionViewModel.activePresetDisplayName, reloaded.name)
     }
 
     func testSessionExposesAudioInputSources() {

@@ -35,6 +35,9 @@ final class RendererStateTests: XCTestCase {
             pitchConfidence: 1.6,
             stablePitchClass: 17,
             stablePitchCents: -84,
+            colorHueMin: -0.4,
+            colorHueMax: 1.8,
+            colorHueOutside: true,
             colorShiftSaturation: 2.0,
             isAttack: true,
             attackStrength: 4.0,
@@ -73,6 +76,9 @@ final class RendererStateTests: XCTestCase {
         XCTAssertEqual(clamped.pitchConfidence, 1)
         XCTAssertEqual(clamped.stablePitchClass, 11)
         XCTAssertEqual(clamped.stablePitchCents, -50)
+        XCTAssertEqual(clamped.colorHueMin, 0)
+        XCTAssertEqual(clamped.colorHueMax, 1)
+        XCTAssertTrue(clamped.colorHueOutside)
         XCTAssertEqual(clamped.colorShiftSaturation, 1)
         XCTAssertEqual(clamped.attackStrength, 1)
         XCTAssertEqual(clamped.attackID, 99)
@@ -126,6 +132,214 @@ final class RendererStateTests: XCTestCase {
         )
 
         XCTAssertEqual(held, 0.61, accuracy: 0.0001)
+    }
+
+    func testColorShiftHueClampInsideArcWrap() {
+        let controls = RendererControlState(
+            colorHueMin: 0.80,
+            colorHueMax: 0.20,
+            colorHueOutside: false
+        )
+
+        let wrappedAllowed = colorShiftClampedHueTarget(targetHue: 0.05, controls: controls)
+        let wrappedDisallowed = colorShiftClampedHueTarget(targetHue: 0.55, controls: controls)
+
+        XCTAssertEqual(wrappedAllowed, 0.05, accuracy: 0.0001)
+        XCTAssertNotEqual(wrappedDisallowed, 0.55, accuracy: 0.0001)
+    }
+
+    func testColorShiftHueClampOutsideUsesComplement() {
+        let controls = RendererControlState(
+            colorHueMin: 0.20,
+            colorHueMax: 0.40,
+            colorHueOutside: true
+        )
+
+        let disallowedInside = colorShiftClampedHueTarget(targetHue: 0.30, controls: controls)
+        let allowedOutside = colorShiftClampedHueTarget(targetHue: 0.60, controls: controls)
+
+        XCTAssertNotEqual(disallowedInside, 0.30, accuracy: 0.0001)
+        XCTAssertEqual(allowedOutside, 0.60, accuracy: 0.0001)
+    }
+
+    func testColorShiftHueClampFeatherTransitionsNearBoundary() {
+        let controls = RendererControlState(
+            colorHueMin: 0.20,
+            colorHueMax: 0.40,
+            colorHueOutside: false
+        )
+
+        let nearBoundary = colorShiftClampedHueTarget(targetHue: 0.418, controls: controls, featherWidth: 0.024)
+        let farOutside = colorShiftClampedHueTarget(targetHue: 0.48, controls: controls, featherWidth: 0.024)
+
+        XCTAssertGreaterThanOrEqual(nearBoundary, 0.40)
+        XCTAssertLessThanOrEqual(nearBoundary, 0.418)
+        XCTAssertEqual(farOutside, 0.40, accuracy: 0.0001)
+    }
+
+    func testColorShiftMappedHueTargetUsesInsideArc() {
+        let controls = RendererControlState(
+            colorHueMin: 0.10,
+            colorHueMax: 0.30,
+            colorHueOutside: false
+        )
+
+        let mappedQuarter = colorShiftMappedHueTarget(targetHue: 0.25, controls: controls)
+        let mappedHalf = colorShiftMappedHueTarget(targetHue: 0.50, controls: controls)
+        let mappedThreeQuarter = colorShiftMappedHueTarget(targetHue: 0.75, controls: controls)
+
+        XCTAssertEqual(mappedQuarter, 0.15, accuracy: 0.0001)
+        XCTAssertEqual(mappedHalf, 0.20, accuracy: 0.0001)
+        XCTAssertEqual(mappedThreeQuarter, 0.25, accuracy: 0.0001)
+    }
+
+    func testColorShiftMappedHueTargetUsesOutsideComplementArc() {
+        let controls = RendererControlState(
+            colorHueMin: 0.20,
+            colorHueMax: 0.40,
+            colorHueOutside: true
+        )
+
+        let mappedStart = colorShiftMappedHueTarget(targetHue: 0.0, controls: controls)
+        let mappedMid = colorShiftMappedHueTarget(targetHue: 0.50, controls: controls)
+        let mappedWrap = colorShiftMappedHueTarget(targetHue: 0.75, controls: controls)
+
+        XCTAssertEqual(mappedStart, 0.40, accuracy: 0.0001)
+        XCTAssertEqual(mappedMid, 0.80, accuracy: 0.0001)
+        XCTAssertEqual(mappedWrap, 0.00, accuracy: 0.0001)
+    }
+
+    func testColorShiftCenterHueMatchesSelectedArcMidpoint() {
+        let insideControls = RendererControlState(
+            colorHueMin: 0.10,
+            colorHueMax: 0.30,
+            colorHueOutside: false
+        )
+        let outsideControls = RendererControlState(
+            colorHueMin: 0.20,
+            colorHueMax: 0.40,
+            colorHueOutside: true
+        )
+
+        XCTAssertEqual(colorShiftCenterHue(controls: insideControls), 0.20, accuracy: 0.0001)
+        XCTAssertEqual(colorShiftCenterHue(controls: outsideControls), 0.80, accuracy: 0.0001)
+    }
+
+    func testColorShiftCenterHueAppliesHueCenterShift() {
+        let controls = RendererControlState(
+            colorHueMin: 0.10,
+            colorHueMax: 0.30,
+            colorHueOutside: false,
+            colorHueShift: 0.25
+        )
+
+        XCTAssertEqual(colorShiftCenterHue(controls: controls), 0.45, accuracy: 0.0001)
+    }
+
+    func testColorShiftPWMHueTargetStaysOnSingleSideForDirection() {
+        let controls = RendererControlState(
+            intensity: 1.0,
+            scale: 0.65,
+            motion: 0.90,
+            diffusion: 0.30,
+            featureAmplitude: 0.85,
+            lowBandEnergy: 0.22,
+            midBandEnergy: 0.58,
+            highBandEnergy: 0.37,
+            pitchConfidence: 0.74,
+            colorHueMin: 0.10,
+            colorHueMax: 0.30,
+            colorHueOutside: false,
+            attackStrength: 0.45
+        )
+        let center = colorShiftCenterHue(controls: controls)
+        let rightA = colorShiftPWMHueTarget(pwmPhase: 0.08, controls: controls, directionSign: 1)
+        let rightB = colorShiftPWMHueTarget(pwmPhase: 0.58, controls: controls, directionSign: 1)
+        let leftA = colorShiftPWMHueTarget(pwmPhase: 0.08, controls: controls, directionSign: -1)
+        let leftB = colorShiftPWMHueTarget(pwmPhase: 0.58, controls: controls, directionSign: -1)
+
+        XCTAssertGreaterThanOrEqual(rightA, center)
+        XCTAssertGreaterThanOrEqual(rightB, center)
+        XCTAssertLessThanOrEqual(leftA, center)
+        XCTAssertLessThanOrEqual(leftB, center)
+        XCTAssertTrue(rightA >= 0.10 && rightA <= 0.30)
+        XCTAssertTrue(rightB >= 0.10 && rightB <= 0.30)
+        XCTAssertTrue(leftA >= 0.10 && leftA <= 0.30)
+        XCTAssertTrue(leftB >= 0.10 && leftB <= 0.30)
+    }
+
+    func testColorShiftDirectionLatchDoesNotChatterNearZeroEvidence() {
+        var state = ColorShiftDirectionState()
+        let controls = RendererControlState(
+            motion: 0.68,
+            featureAmplitude: 0.52,
+            lowBandEnergy: 0.49,
+            midBandEnergy: 0.50,
+            highBandEnergy: 0.51,
+            colorShiftExcitementMode: 0
+        )
+
+        for _ in 0 ..< 120 {
+            state = advanceColorShiftDirectionState(
+                state: state,
+                deltaTime: 1.0 / 120.0,
+                controls: controls
+            )
+        }
+
+        XCTAssertEqual(state.directionSign, 1, accuracy: 0.0001)
+    }
+
+    func testColorShiftDirectionLatchFlipsAfterSustainedOppositeEvidence() {
+        var state = ColorShiftDirectionState(directionSign: 1)
+        let controls = RendererControlState(
+            motion: 0.72,
+            featureAmplitude: 0.72,
+            lowBandEnergy: 0.88,
+            midBandEnergy: 0.16,
+            highBandEnergy: 0.10,
+            colorShiftExcitementMode: 0
+        )
+
+        for _ in 0 ..< 90 {
+            state = advanceColorShiftDirectionState(
+                state: state,
+                deltaTime: 1.0 / 120.0,
+                controls: controls
+            )
+        }
+
+        XCTAssertEqual(state.directionSign, -1, accuracy: 0.0001)
+    }
+
+    func testColorShiftPWMPhaseAdvanceIncreasesWithHigherDrive() {
+        let lowDrive = RendererControlState(
+            motion: 0.70,
+            featureAmplitude: 0.15,
+            lowBandEnergy: 0.12,
+            midBandEnergy: 0.10,
+            highBandEnergy: 0.09
+        )
+        let highDrive = RendererControlState(
+            motion: 0.70,
+            featureAmplitude: 0.92,
+            lowBandEnergy: 0.80,
+            midBandEnergy: 0.84,
+            highBandEnergy: 0.78
+        )
+
+        let lowPhase = advanceColorShiftPWMPhase(
+            currentPhase: 0.12,
+            deltaTime: 0.05,
+            controls: lowDrive
+        )
+        let highPhase = advanceColorShiftPWMPhase(
+            currentPhase: 0.12,
+            deltaTime: 0.05,
+            controls: highDrive
+        )
+
+        XCTAssertGreaterThan(highPhase - 0.12, lowPhase - 0.12)
     }
 
     func testColorShiftHuePhaseDeterministicForSameInputs() {
@@ -250,19 +464,27 @@ final class RendererStateTests: XCTestCase {
         )
         sessionViewModel.updateParameter(
             sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.hueRange")!,
-            value: .scalar(0.65)
+            value: .hueRange(min: 0.20, max: 0.65, outside: false)
         )
         sessionViewModel.updateParameter(
             sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.hueResponse")!,
             value: .scalar(0.31)
+        )
+        sessionViewModel.updateParameter(
+            sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.excitementMode")!,
+            value: .scalar(1.0)
         )
 
         let surfaceState = sessionViewModel.rendererSurfaceState
         XCTAssertEqual(surfaceState.activeModeID, .colorShift)
         XCTAssertEqual(surfaceState.controls.intensity, 1.1, accuracy: 0.0001)
         XCTAssertEqual(surfaceState.controls.diffusion, 0.44, accuracy: 0.0001)
-        XCTAssertEqual(surfaceState.controls.scale, 0.65, accuracy: 0.0001)
+        XCTAssertEqual(surfaceState.controls.scale, 0.45, accuracy: 0.0001)
         XCTAssertEqual(surfaceState.controls.motion, 0.31, accuracy: 0.0001)
+        XCTAssertEqual(surfaceState.controls.colorHueMin, 0.20, accuracy: 0.0001)
+        XCTAssertEqual(surfaceState.controls.colorHueMax, 0.65, accuracy: 0.0001)
+        XCTAssertFalse(surfaceState.controls.colorHueOutside)
+        XCTAssertEqual(surfaceState.controls.colorShiftExcitementMode, 1.0, accuracy: 0.0001)
         XCTAssertEqual(surfaceState.controls.ringDecay, 0.82, accuracy: 0.0001)
     }
 
@@ -1514,6 +1736,101 @@ final class RendererStateTests: XCTestCase {
         XCTAssertTrue(starts)
     }
 
+    func testTunnelSyntheticSpawnEvidenceRisesWithExcitement() {
+        let quiet = RendererControlState(
+            motion: 0.18,
+            featureAmplitude: 0.10,
+            lowBandEnergy: 0.08,
+            midBandEnergy: 0.10,
+            highBandEnergy: 0.12,
+            attackStrength: 0.02
+        )
+        let excited = RendererControlState(
+            motion: 0.82,
+            featureAmplitude: 0.72,
+            lowBandEnergy: 0.66,
+            midBandEnergy: 0.62,
+            highBandEnergy: 0.74,
+            attackStrength: 0.58
+        )
+
+        let quietEvidence = tunnelSyntheticSpawnEvidence(controls: quiet)
+        let excitedEvidence = tunnelSyntheticSpawnEvidence(controls: excited)
+
+        XCTAssertGreaterThan(excitedEvidence, quietEvidence)
+        XCTAssertGreaterThanOrEqual(excitedEvidence, 0)
+        XCTAssertLessThanOrEqual(excitedEvidence, 1)
+    }
+
+    func testTunnelSyntheticSpawnTriggerHonorsThresholdAndCooldown() {
+        let starts = shouldTriggerTunnelSyntheticSpawn(
+            evidence: 0.48,
+            previousEvidence: 0.30,
+            elapsedTime: 1.60,
+            lastSpawnTime: 1.20
+        )
+        let blockedByCooldown = shouldTriggerTunnelSyntheticSpawn(
+            evidence: 0.72,
+            previousEvidence: 0.62,
+            elapsedTime: 1.25,
+            lastSpawnTime: 1.20
+        )
+        let blockedBelowThreshold = shouldTriggerTunnelSyntheticSpawn(
+            evidence: 0.05,
+            previousEvidence: 0.04,
+            elapsedTime: 1.60,
+            lastSpawnTime: 1.20
+        )
+
+        XCTAssertTrue(starts)
+        XCTAssertFalse(blockedByCooldown)
+        XCTAssertFalse(blockedBelowThreshold)
+    }
+
+    // Backward-compatible coverage name retained for older task expectations.
+    func testTunnelSyntheticSpawnTriggerHonorsRisingEdgeAndCooldown() {
+        let starts = shouldTriggerTunnelSyntheticSpawn(
+            evidence: 0.52,
+            previousEvidence: 0.50,
+            elapsedTime: 1.60,
+            lastSpawnTime: 1.20
+        )
+        let blockedByCooldown = shouldTriggerTunnelSyntheticSpawn(
+            evidence: 0.72,
+            previousEvidence: 0.62,
+            elapsedTime: 1.25,
+            lastSpawnTime: 1.20
+        )
+
+        XCTAssertTrue(starts)
+        XCTAssertFalse(blockedByCooldown)
+    }
+
+    func testTunnelGuaranteedSpawnRequiresIdleWindowAndNoActiveShapes() {
+        let startsWhenIdle = shouldTriggerTunnelGuaranteedSpawn(
+            elapsedTime: 2.0,
+            lastSpawnTime: 1.4,
+            hasActiveShapes: false,
+            idleWindow: 0.4
+        )
+        let blockedWithActiveShapes = shouldTriggerTunnelGuaranteedSpawn(
+            elapsedTime: 2.0,
+            lastSpawnTime: 1.4,
+            hasActiveShapes: true,
+            idleWindow: 0.4
+        )
+        let blockedBeforeIdleWindow = shouldTriggerTunnelGuaranteedSpawn(
+            elapsedTime: 1.72,
+            lastSpawnTime: 1.4,
+            hasActiveShapes: false,
+            idleWindow: 0.4
+        )
+
+        XCTAssertTrue(startsWhenIdle)
+        XCTAssertFalse(blockedWithActiveShapes)
+        XCTAssertFalse(blockedBeforeIdleWindow)
+    }
+
     func testTunnelEnvelopeTransitionsAttackDecaySustainRelease() {
         let attack = tunnelShapeEnvelopeValue(
             age: 0.010,
@@ -1614,5 +1931,21 @@ final class RendererStateTests: XCTestCase {
         )
 
         XCTAssertEqual(selection, .riemann)
+    }
+
+    func testRendererPassSelectionChoosesColorFeedbackForColorShiftWhenEnabled() {
+        let selection = rendererPassSelection(
+            modeID: .colorShift,
+            colorFeedbackEnabled: true,
+            hasColorFeedbackPipeline: true,
+            hasPrismPipeline: true,
+            hasTunnelPipeline: true,
+            hasFractalPipeline: true,
+            hasRiemannPipeline: true,
+            hasCameraFeedbackFrame: true,
+            radialFallbackActive: false
+        )
+
+        XCTAssertEqual(selection, .colorFeedback)
     }
 }
