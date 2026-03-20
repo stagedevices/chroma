@@ -8,6 +8,7 @@ public final class SessionViewModel: ObservableObject {
     private static let exportResolutionDefaultsKey = "session.export.resolutionPreset"
     private static let exportFrameRateDefaultsKey = "session.export.frameRate"
     private static let exportCodecDefaultsKey = "session.export.videoCodec"
+    private static let sessionAutosaveDebounceNS: UInt64 = 650_000_000
     private static let quickSaveTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -32,6 +33,11 @@ public final class SessionViewModel: ObservableObject {
     @Published public private(set) var recorderCaptureState: RecorderCaptureState
     @Published public private(set) var recorderStatusMessage: String?
     @Published public private(set) var appearanceTransitionToken: UUID
+    @Published public private(set) var isCalibratingInput: Bool
+    @Published public private(set) var calibrationStatusMessage: String?
+    @Published public private(set) var modeDefaultsStatusMessage: String?
+    @Published public private(set) var sessionRecoveryStatusMessage: String?
+    @Published public private(set) var thermalFallbackIsActive: Bool
     @Published public var includeMicAudioInExport: Bool
 
     public let parameterStore: ParameterStore
@@ -42,6 +48,8 @@ public final class SessionViewModel: ObservableObject {
     public let rendererService: RendererService
     public let renderCoordinator: RenderCoordinator
     public let presetService: PresetService
+    public let modeDefaultsService: ModeDefaultsService
+    public let sessionRecoveryService: SessionRecoveryService
     public let recorderService: RecorderService
     public let diagnosticsService: DiagnosticsService
     public let externalDisplayCoordinator: ExternalDisplayCoordinator
@@ -54,6 +62,8 @@ public final class SessionViewModel: ObservableObject {
     private var lastAudioPipelineError: String?
     private var activePresetBaselineValues: [ScopedParameterValue]?
     private var activePresetBaselineModeID: VisualModeID?
+    private var autosaveTask: Task<Void, Never>?
+    private var performanceModeOverride: PerformanceMode?
 
     public init(
         session: ChromaSession,
@@ -65,6 +75,8 @@ public final class SessionViewModel: ObservableObject {
         rendererService: RendererService,
         renderCoordinator: RenderCoordinator,
         presetService: PresetService,
+        modeDefaultsService: ModeDefaultsService,
+        sessionRecoveryService: SessionRecoveryService,
         recorderService: RecorderService,
         diagnosticsService: DiagnosticsService,
         externalDisplayCoordinator: ExternalDisplayCoordinator,
@@ -83,6 +95,8 @@ public final class SessionViewModel: ObservableObject {
         self.rendererService = rendererService
         self.renderCoordinator = renderCoordinator
         self.presetService = presetService
+        self.modeDefaultsService = modeDefaultsService
+        self.sessionRecoveryService = sessionRecoveryService
         self.recorderService = recorderService
         self.diagnosticsService = diagnosticsService
         self.externalDisplayCoordinator = externalDisplayCoordinator
@@ -102,6 +116,11 @@ public final class SessionViewModel: ObservableObject {
         self.recorderCaptureState = recorderService.captureState
         self.recorderStatusMessage = recorderService.statusMessage
         self.appearanceTransitionToken = UUID()
+        self.isCalibratingInput = false
+        self.calibrationStatusMessage = nil
+        self.modeDefaultsStatusMessage = nil
+        self.sessionRecoveryStatusMessage = nil
+        self.thermalFallbackIsActive = false
         self.includeMicAudioInExport = Self.loadIncludeMicAudioPreference()
         self.surfaceStateMapper = RendererSurfaceStateMapper()
         self.audioStatusFormatter = AudioStatusFormatter()
@@ -126,7 +145,9 @@ public final class SessionViewModel: ObservableObject {
         bindCameraFeedbackStream()
         bindRecorderStreams()
         bindExternalDisplayStreams()
+        bindThermalStateChanges()
         refreshAudioInputs()
+        applyPerformanceModeOverrideIfNeeded()
         syncAudioAnalysisTuning()
         syncCameraFeedbackStatus()
         rendererService.updateCameraFeedbackFrame(cameraFeedbackService.latestFrame)
@@ -155,6 +176,25 @@ public final class SessionViewModel: ObservableObject {
         session.exportCaptureSettings
     }
 
+    public var effectivePerformanceMode: PerformanceMode {
+        performanceModeOverride ?? session.performanceSettings.mode
+    }
+
+    public var riemannNavigationIsFreeFlight: Bool {
+        let raw = parameterStore.value(
+            for: "mode.riemannCorridor.navigationMode",
+            scope: .mode(.riemannCorridor)
+        )?.scalarValue ?? 0
+        return raw >= 0.5
+    }
+
+    public var riemannSteeringStrength: Double {
+        parameterStore.value(
+            for: "mode.riemannCorridor.steeringStrength",
+            scope: .mode(.riemannCorridor)
+        )?.scalarValue ?? 0.62
+    }
+
     public var quickControlDescriptors: [ParameterDescriptor] {
         let descriptorIDs = ParameterCatalog.quickControlParameterIDs(for: session.activeModeID)
         return descriptorIDs.compactMap { parameterStore.descriptor(for: $0) }
@@ -180,7 +220,8 @@ public final class SessionViewModel: ObservableObject {
         surfaceStateMapper.map(
             session: session,
             parameterStore: parameterStore,
-            latestFeatureFrame: latestAudioFeatureFrame.timestamp == .distantPast ? nil : latestAudioFeatureFrame
+            latestFeatureFrame: latestAudioFeatureFrame.timestamp == .distantPast ? nil : latestAudioFeatureFrame,
+            performanceModeOverride: effectivePerformanceMode
         )
     }
 
@@ -225,6 +266,18 @@ public final class SessionViewModel: ObservableObject {
         }
     }
 
+    public var tunnelVariantSelectionIndex: Int {
+        tunnelVariantIndex
+    }
+
+    public var fractalPaletteSelectionIndex: Int {
+        fractalPaletteIndex
+    }
+
+    public var riemannPaletteSelectionIndex: Int {
+        riemannPaletteIndex
+    }
+
     public var riemannPaletteLabel: String {
         switch riemannPaletteIndex {
         case 0: return "Aurora"
@@ -254,8 +307,12 @@ public final class SessionViewModel: ObservableObject {
         default:
             break
         }
+        modeDefaultsStatusMessage = nil
+        calibrationStatusMessage = nil
+        sessionRecoveryStatusMessage = nil
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public var colorShiftHueCenterShift: Double {
@@ -278,8 +335,11 @@ public final class SessionViewModel: ObservableObject {
         if modeID != .colorShift {
             stopColorFeedbackCapture()
         }
+        applyModeDefaultsIfAvailable(for: modeID)
+        modeDefaultsStatusMessage = nil
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func applyPreset(_ preset: Preset) {
@@ -292,6 +352,7 @@ public final class SessionViewModel: ObservableObject {
             stopColorFeedbackCapture()
         }
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     @discardableResult
@@ -311,6 +372,7 @@ public final class SessionViewModel: ObservableObject {
             session.activePresetName = preset.name
             capturePresetBaseline(modeID: session.activeModeID)
             syncRendererState()
+            scheduleSessionAutosave()
             return preset
         } catch {
             return nil
@@ -331,6 +393,7 @@ public final class SessionViewModel: ObservableObject {
             }
             syncPresetDirtyState()
             syncRendererState()
+            scheduleSessionAutosave()
         } catch {
             return
         }
@@ -347,6 +410,7 @@ public final class SessionViewModel: ObservableObject {
             }
             syncPresetDirtyState()
             syncRendererState()
+            scheduleSessionAutosave()
         } catch {
             return
         }
@@ -360,6 +424,7 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func setTunnelVariant(index: Int) {
@@ -370,6 +435,7 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func cycleFractalPaletteVariant() {
@@ -380,6 +446,7 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func setFractalPaletteVariant(index: Int) {
@@ -390,6 +457,7 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func cycleRiemannPaletteVariant() {
@@ -400,6 +468,7 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(next)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func setRiemannPaletteVariant(index: Int) {
@@ -410,12 +479,14 @@ public final class SessionViewModel: ObservableObject {
         parameterStore.setValue(.scalar(Double(clamped)), for: descriptor.id, scope: descriptor.scope)
         syncPresetDirtyState()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func selectDisplayTarget(id: String) {
         externalDisplayCoordinator.selectDisplayTarget(id: id)
         session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
         session.availableDisplayTargets = externalDisplayCoordinator.targets
+        scheduleSessionAutosave()
     }
 
     public func toggleGlassAppearanceStyle() {
@@ -427,22 +498,26 @@ public final class SessionViewModel: ObservableObject {
         session.outputState.glassAppearanceStyle = style
         appearanceTransitionToken = UUID()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func setExportResolutionPreset(_ preset: ExportResolutionPreset) {
         session.exportCaptureSettings.resolutionPreset = preset
         persistExportCaptureSettings()
+        scheduleSessionAutosave()
     }
 
     public func setExportFrameRate(_ frameRate: ExportFrameRate) {
         session.exportCaptureSettings.frameRate = frameRate
         persistExportCaptureSettings()
+        scheduleSessionAutosave()
     }
 
     public func setExportVideoCodec(_ codec: ExportVideoCodec) {
         guard supportedExportCodecs.contains(codec) else { return }
         session.exportCaptureSettings.codec = codec
         persistExportCaptureSettings()
+        scheduleSessionAutosave()
     }
 
     public func isExportCodecSupported(_ codec: ExportVideoCodec) -> Bool {
@@ -452,6 +527,184 @@ public final class SessionViewModel: ObservableObject {
     public func setIncludeMicAudioInExport(_ isEnabled: Bool) {
         includeMicAudioInExport = isEnabled
         Self.persistIncludeMicAudioPreference(isEnabled)
+        scheduleSessionAutosave()
+    }
+
+    public func setPerformanceMode(_ mode: PerformanceMode) {
+        guard session.performanceSettings.mode != mode else { return }
+        session.performanceSettings.mode = mode
+        applyPerformanceModeOverrideIfNeeded()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func setThermalAwareFallbackEnabled(_ isEnabled: Bool) {
+        guard session.performanceSettings.thermalAwareFallbackEnabled != isEnabled else { return }
+        session.performanceSettings.thermalAwareFallbackEnabled = isEnabled
+        applyPerformanceModeOverrideIfNeeded()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func calibrateRoomNoise() async {
+        guard !isCalibratingInput else { return }
+        isCalibratingInput = true
+        calibrationStatusMessage = "Calibrating room noise…"
+
+        do {
+            let result = try await inputCalibrationService.beginCalibration()
+            session.audioCalibrationSettings.attackThresholdDB = result.attackThresholdDB
+            session.audioCalibrationSettings.silenceGateThreshold = result.silenceGateThreshold
+            calibrationStatusMessage = String(
+                format: "Calibrated: %.1f dB attack • %.3f silence gate",
+                result.attackThresholdDB,
+                result.silenceGateThreshold
+            )
+            syncAudioAnalysisTuning()
+            syncRendererState()
+            scheduleSessionAutosave()
+        } catch {
+            calibrationStatusMessage = "Calibration canceled"
+        }
+
+        isCalibratingInput = false
+    }
+
+    public func cancelCalibration() {
+        inputCalibrationService.cancelCalibration()
+        isCalibratingInput = false
+        calibrationStatusMessage = "Calibration canceled"
+    }
+
+    public func adjustAttackThreshold(by deltaDB: Double) {
+        let current = session.audioCalibrationSettings.attackThresholdDB
+        session.audioCalibrationSettings.attackThresholdDB = min(max(current + deltaDB, 2), 24)
+        calibrationStatusMessage = nil
+        syncAudioAnalysisTuning()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func adjustSilenceGateThreshold(by delta: Double) {
+        let current = session.audioCalibrationSettings.silenceGateThreshold
+        session.audioCalibrationSettings.silenceGateThreshold = min(max(current + delta, 0.005), 0.20)
+        calibrationStatusMessage = nil
+        syncAudioAnalysisTuning()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func setRiemannNavigationMode(freeFlight: Bool) {
+        guard let descriptor = parameterStore.descriptor(for: "mode.riemannCorridor.navigationMode") else { return }
+        parameterStore.setValue(.scalar(freeFlight ? 1 : 0), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func setRiemannSteeringStrength(_ value: Double) {
+        guard let descriptor = parameterStore.descriptor(for: "mode.riemannCorridor.steeringStrength") else { return }
+        let clamped = min(max(value, 0), 1)
+        parameterStore.setValue(.scalar(clamped), for: descriptor.id, scope: descriptor.scope)
+        syncPresetDirtyState()
+        syncRendererState()
+        scheduleSessionAutosave()
+    }
+
+    public func adjustRiemannSteeringStrength(by delta: Double) {
+        setRiemannSteeringStrength(riemannSteeringStrength + delta)
+    }
+
+    public func setCurrentModeAsDefault() {
+        let modeID = session.activeModeID
+        let values = modeDefaultSnapshot(for: modeID)
+        do {
+            try modeDefaultsService.saveDefaults(values, for: modeID)
+            modeDefaultsStatusMessage = "Saved defaults for \(ParameterCatalog.modeDescriptor(for: modeID).name)"
+            scheduleSessionAutosave()
+        } catch {
+            modeDefaultsStatusMessage = "Failed to save mode defaults"
+        }
+    }
+
+    public func resetCurrentModeDefaults() {
+        let modeID = session.activeModeID
+        let resetAssignments = modeDefaultsService.defaults(for: modeID) ?? modeDefaultCatalogDefaults(for: modeID)
+        do {
+            try modeDefaultsService.removeDefaults(for: modeID)
+            for assignment in resetAssignments {
+                parameterStore.resetValue(for: assignment.parameterID, scope: assignment.scope)
+            }
+            modeDefaultsStatusMessage = "Reset defaults for \(ParameterCatalog.modeDescriptor(for: modeID).name)"
+            syncPresetDirtyState()
+            syncRendererState()
+            scheduleSessionAutosave()
+        } catch {
+            modeDefaultsStatusMessage = "Failed to reset mode defaults"
+        }
+    }
+
+    public func setSessionAutoSaveEnabled(_ isEnabled: Bool) {
+        guard session.sessionRecoverySettings.autoSaveEnabled != isEnabled else { return }
+        session.sessionRecoverySettings.autoSaveEnabled = isEnabled
+        if !isEnabled {
+            autosaveTask?.cancel()
+            autosaveTask = nil
+            sessionRecoveryStatusMessage = "Session auto-save disabled"
+        } else {
+            scheduleSessionAutosave()
+            sessionRecoveryStatusMessage = "Session auto-save enabled"
+        }
+        syncRendererState()
+    }
+
+    public func setRestoreOnLaunchEnabled(_ isEnabled: Bool) {
+        guard session.sessionRecoverySettings.restoreOnLaunchEnabled != isEnabled else { return }
+        session.sessionRecoverySettings.restoreOnLaunchEnabled = isEnabled
+        if session.sessionRecoverySettings.autoSaveEnabled {
+            scheduleSessionAutosave()
+        } else {
+            persistSessionRecoverySnapshotImmediately()
+        }
+        sessionRecoveryStatusMessage = isEnabled
+            ? "Restore on launch enabled"
+            : "Restore on launch disabled"
+    }
+
+    public func resetToCleanState() async {
+        if case .recording = recorderCaptureState {
+            await stopRecorderCapture()
+        } else if case .starting = recorderCaptureState {
+            await stopRecorderCapture()
+        }
+
+        stopColorFeedbackCapture()
+        autosaveTask?.cancel()
+        autosaveTask = nil
+
+        session = ChromaSession.initial()
+        parameterStore.load([])
+        refreshPresetsFromStore()
+        clearPresetBaseline()
+        modeDefaultsStatusMessage = nil
+        calibrationStatusMessage = nil
+        sessionRecoveryStatusMessage = "Session reset to clean state"
+
+        session.availableDisplayTargets = externalDisplayCoordinator.availableTargets()
+        externalDisplayCoordinator.selectDisplayTarget(id: "device")
+        session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
+
+        do {
+            try sessionRecoveryService.clearSnapshot()
+        } catch {
+            sessionRecoveryStatusMessage = "Reset complete, but failed to clear recovery snapshot"
+        }
+
+        applyPerformanceModeOverrideIfNeeded()
+        syncAudioAnalysisTuning()
+        syncCameraFeedbackStatus()
+        syncRendererState()
+        scheduleSessionAutosave()
     }
 
     public func startRecorderCapture() async {
@@ -563,6 +816,7 @@ public final class SessionViewModel: ObservableObject {
         rendererService.updateCameraFeedbackFrame(nil)
         syncCameraFeedbackStatus()
         syncRendererState()
+        scheduleSessionAutosave()
     }
 
     private func syncRendererState() {
@@ -720,6 +974,97 @@ public final class SessionViewModel: ObservableObject {
         isActivePresetModified = snapshotForPresetComparison(modeID: baselineModeID) != baselineValues
     }
 
+    private func bindThermalStateChanges() {
+        NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applyPerformanceModeOverrideIfNeeded()
+                self?.syncRendererState()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyPerformanceModeOverrideIfNeeded() {
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let shouldForceSafe =
+            session.performanceSettings.thermalAwareFallbackEnabled &&
+            (thermalState == .serious || thermalState == .critical)
+        performanceModeOverride = shouldForceSafe ? .safeFPS : nil
+        thermalFallbackIsActive = shouldForceSafe
+    }
+
+    private func applyModeDefaultsIfAvailable(for modeID: VisualModeID) {
+        guard let defaults = modeDefaultsService.defaults(for: modeID), !defaults.isEmpty else { return }
+        parameterStore.apply(defaults)
+    }
+
+    private func modeDefaultSnapshot(for modeID: VisualModeID) -> [ScopedParameterValue] {
+        let descriptorIDs = Set(ParameterCatalog.surfaceControlParameterIDs(for: modeID))
+        var assignments: [ScopedParameterValue] = []
+        assignments.reserveCapacity(descriptorIDs.count)
+
+        for parameterID in descriptorIDs.sorted() {
+            guard let descriptor = parameterStore.descriptor(for: parameterID) else { continue }
+            let value = parameterStore.value(for: descriptor.id, scope: descriptor.scope) ?? descriptor.defaultValue
+            assignments.append(
+                ScopedParameterValue(
+                    parameterID: descriptor.id,
+                    scope: descriptor.scope,
+                    value: value
+                )
+            )
+        }
+
+        return assignments
+    }
+
+    private func modeDefaultCatalogDefaults(for modeID: VisualModeID) -> [ScopedParameterValue] {
+        let descriptorIDs = Set(ParameterCatalog.surfaceControlParameterIDs(for: modeID))
+        return descriptorIDs
+            .sorted()
+            .compactMap { parameterID in
+                guard let descriptor = parameterStore.descriptor(for: parameterID) else { return nil }
+                return ScopedParameterValue(
+                    parameterID: descriptor.id,
+                    scope: descriptor.scope,
+                    value: descriptor.defaultValue
+                )
+            }
+    }
+
+    private func scheduleSessionAutosave() {
+        guard session.sessionRecoverySettings.autoSaveEnabled else { return }
+        autosaveTask?.cancel()
+        let snapshot = SessionRecoverySnapshot(
+            session: session,
+            parameterAssignments: parameterStore.snapshot(),
+            savedAt: .now
+        )
+        autosaveTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: Self.sessionAutosaveDebounceNS)
+            guard !Task.isCancelled else { return }
+            do {
+                try self.sessionRecoveryService.saveSnapshot(snapshot)
+            } catch {
+                self.sessionRecoveryStatusMessage = "Session auto-save failed"
+            }
+        }
+    }
+
+    private func persistSessionRecoverySnapshotImmediately() {
+        let snapshot = SessionRecoverySnapshot(
+            session: session,
+            parameterAssignments: parameterStore.snapshot(),
+            savedAt: .now
+        )
+        do {
+            try sessionRecoveryService.saveSnapshot(snapshot)
+        } catch {
+            sessionRecoveryStatusMessage = "Session recovery save failed"
+        }
+    }
+
     private func syncAudioAnalysisTuning() {
         let responseInputGain = parameterStore.value(
             for: "response.inputGain",
@@ -727,13 +1072,18 @@ public final class SessionViewModel: ObservableObject {
         )?.scalarValue ?? 0.72
         // Map UI response gain into detector gain in dB around the tuned default baseline.
         let inputGainDB = (responseInputGain - 0.72) * 16
+        let clampedAttackThreshold = min(max(session.audioCalibrationSettings.attackThresholdDB, 2), 24)
+        let clampedSilenceGate = min(max(session.audioCalibrationSettings.silenceGateThreshold, 0.005), 0.20)
+        session.audioCalibrationSettings.attackThresholdDB = clampedAttackThreshold
+        session.audioCalibrationSettings.silenceGateThreshold = clampedSilenceGate
 
         audioAnalysisService.updateTuning(
             AudioAnalysisTuning(
-                attackThresholdDB: 8,
+                attackThresholdDB: clampedAttackThreshold,
                 attackHysteresisDB: 2,
                 attackCooldownMS: 70,
-                inputGainDB: inputGainDB
+                inputGainDB: inputGainDB,
+                silenceGateThreshold: clampedSilenceGate
             )
         )
     }

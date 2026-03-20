@@ -33,7 +33,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var riemannDetail: Double
     public var riemannFlowRate: Double
     public var riemannZeroBloom: Double
+    public var riemannNavigationMode: Double
+    public var riemannSteeringStrength: Double
     public var riemannPaletteVariant: Double
+    public var performanceModeIndex: Double
+    public var silenceGateThreshold: Double
     public var featureAmplitude: Double
     public var lowBandEnergy: Double
     public var midBandEnergy: Double
@@ -78,7 +82,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         riemannDetail: Double = 0.60,
         riemannFlowRate: Double = 0.56,
         riemannZeroBloom: Double = 0.62,
+        riemannNavigationMode: Double = 0.0,
+        riemannSteeringStrength: Double = 0.62,
         riemannPaletteVariant: Double = 0,
+        performanceModeIndex: Double = 0.0,
+        silenceGateThreshold: Double = 0.03,
         featureAmplitude: Double = 0,
         lowBandEnergy: Double = 0,
         midBandEnergy: Double = 0,
@@ -122,7 +130,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.riemannDetail = riemannDetail
         self.riemannFlowRate = riemannFlowRate
         self.riemannZeroBloom = riemannZeroBloom
+        self.riemannNavigationMode = riemannNavigationMode
+        self.riemannSteeringStrength = riemannSteeringStrength
         self.riemannPaletteVariant = riemannPaletteVariant
+        self.performanceModeIndex = performanceModeIndex
+        self.silenceGateThreshold = silenceGateThreshold
         self.featureAmplitude = featureAmplitude
         self.lowBandEnergy = lowBandEnergy
         self.midBandEnergy = midBandEnergy
@@ -169,7 +181,11 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             riemannDetail: riemannDetail.clamped(to: 0 ... 1),
             riemannFlowRate: riemannFlowRate.clamped(to: 0 ... 1),
             riemannZeroBloom: riemannZeroBloom.clamped(to: 0 ... 1),
+            riemannNavigationMode: riemannNavigationMode.clamped(to: 0 ... 1),
+            riemannSteeringStrength: riemannSteeringStrength.clamped(to: 0 ... 1),
             riemannPaletteVariant: riemannPaletteVariant.clamped(to: 0 ... 7),
+            performanceModeIndex: performanceModeIndex.clamped(to: 0 ... 2),
+            silenceGateThreshold: silenceGateThreshold.clamped(to: 0.005 ... 0.20),
             featureAmplitude: featureAmplitude.clamped(to: 0 ... 1),
             lowBandEnergy: lowBandEnergy.clamped(to: 0 ... 1),
             midBandEnergy: midBandEnergy.clamped(to: 0 ... 1),
@@ -268,7 +284,11 @@ public struct RendererDiagnosticsSummary: Codable, Equatable, Sendable {
 }
 
 private extension Double {
-    func clamped(to range: ClosedRange<Double>) -> Double {
-        min(max(self, range.lowerBound), range.upperBound)
+    func clamped(to range: ClosedRange<Double>, default defaultValue: Double? = nil) -> Double {
+        guard isFinite else {
+            let fallback = defaultValue ?? ((range.lowerBound + range.upperBound) * 0.5)
+            return Swift.min(Swift.max(fallback, range.lowerBound), range.upperBound)
+        }
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

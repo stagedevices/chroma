@@ -23,8 +23,27 @@ public protocol AudioInputService: AnyObject {
 }
 
 public protocol InputCalibrationService: AnyObject {
-    func beginCalibration() async throws
+    func beginCalibration() async throws -> InputCalibrationResult
     func cancelCalibration()
+}
+
+public struct InputCalibrationResult: Equatable, Sendable {
+    public var attackThresholdDB: Double
+    public var silenceGateThreshold: Double
+    public var measuredNoiseFloorDBFS: Double
+    public var measuredAmbientEnergy: Double
+
+    public init(
+        attackThresholdDB: Double,
+        silenceGateThreshold: Double,
+        measuredNoiseFloorDBFS: Double,
+        measuredAmbientEnergy: Double
+    ) {
+        self.attackThresholdDB = attackThresholdDB
+        self.silenceGateThreshold = silenceGateThreshold
+        self.measuredNoiseFloorDBFS = measuredNoiseFloorDBFS
+        self.measuredAmbientEnergy = measuredAmbientEnergy
+    }
 }
 
 public final class PlaceholderAudioInputService: AudioInputService {
@@ -92,10 +111,101 @@ public final class PlaceholderInputCalibrationService: InputCalibrationService {
     public init() {
     }
 
-    public func beginCalibration() async throws {
+    public func beginCalibration() async throws -> InputCalibrationResult {
+        InputCalibrationResult(
+            attackThresholdDB: 8,
+            silenceGateThreshold: 0.03,
+            measuredNoiseFloorDBFS: -56,
+            measuredAmbientEnergy: 0.02
+        )
     }
 
     public func cancelCalibration() {
+    }
+}
+
+public final class LiveInputCalibrationService: InputCalibrationService {
+    private let meterPublisher: AnyPublisher<AudioMeterFrame, Never>
+    private let calibrationWindowSeconds: TimeInterval
+    private let queue = DispatchQueue(label: "chroma.calibration.capture", qos: .userInitiated)
+
+    private var activeCalibrationToken: UUID?
+    private var meterCancellable: AnyCancellable?
+
+    public init(
+        meterPublisher: AnyPublisher<AudioMeterFrame, Never>,
+        calibrationWindowSeconds: TimeInterval = 2.5
+    ) {
+        self.meterPublisher = meterPublisher
+        self.calibrationWindowSeconds = max(0.8, calibrationWindowSeconds)
+    }
+
+    public func beginCalibration() async throws -> InputCalibrationResult {
+        cancelCalibration()
+
+        let token = UUID()
+        activeCalibrationToken = token
+        var capturedFrames: [AudioMeterFrame] = []
+
+        meterCancellable = meterPublisher
+            .receive(on: queue)
+            .sink { frame in
+                capturedFrames.append(frame)
+            }
+
+        let sleepDuration = UInt64(calibrationWindowSeconds * 1_000_000_000)
+        try await Task.sleep(nanoseconds: sleepDuration)
+
+        guard activeCalibrationToken == token else {
+            throw CancellationError()
+        }
+
+        meterCancellable?.cancel()
+        meterCancellable = nil
+        activeCalibrationToken = nil
+
+        let frames = queue.sync { capturedFrames }
+
+        return Self.result(from: frames)
+    }
+
+    public func cancelCalibration() {
+        activeCalibrationToken = nil
+        meterCancellable?.cancel()
+        meterCancellable = nil
+    }
+
+    private static func result(from frames: [AudioMeterFrame]) -> InputCalibrationResult {
+        guard !frames.isEmpty else {
+            return InputCalibrationResult(
+                attackThresholdDB: 8,
+                silenceGateThreshold: 0.03,
+                measuredNoiseFloorDBFS: -56,
+                measuredAmbientEnergy: 0.02
+            )
+        }
+
+        let dbfsSamples = frames.map { frame in
+            frame.rmsDBFS ?? linearToDB(frame.rms)
+        }.sorted()
+        let energySamples = frames.map(\.rms).sorted()
+
+        let noiseFloorDB = percentile(dbfsSamples, p: 0.72)
+        let ambientDB = percentile(dbfsSamples, p: 0.86)
+        let ambientEnergy = percentile(energySamples, p: 0.82)
+
+        let ambientNoiseNorm = ((ambientDB + 62) / 32).clamped(to: 0 ... 1)
+        let attackThresholdDB = (8 + (ambientNoiseNorm * 6)).clamped(to: 3 ... 18)
+
+        let silenceGateBase = (ambientEnergy * 1.22) + 0.008
+        let silenceGateThreshold = silenceGateBase.clamped(to: 0.01 ... 0.20)
+
+        return InputCalibrationResult(
+            attackThresholdDB: attackThresholdDB,
+            silenceGateThreshold: silenceGateThreshold,
+            measuredNoiseFloorDBFS: noiseFloorDB,
+            measuredAmbientEnergy: ambientEnergy
+        )
     }
 }
 
@@ -366,5 +476,29 @@ public enum AudioInputError: LocalizedError {
         case .inputNotFound:
             return "Selected audio input source is unavailable."
         }
+    }
+}
+
+private func percentile(_ values: [Double], p: Double) -> Double {
+    guard !values.isEmpty else { return 0 }
+    let clamped = p.clamped(to: 0 ... 1)
+    let position = clamped * Double(values.count - 1)
+    let lower = Int(floor(position))
+    let upper = Int(ceil(position))
+    if lower == upper {
+        return values[lower]
+    }
+    let t = position - Double(lower)
+    return values[lower] + ((values[upper] - values[lower]) * t)
+}
+
+private func linearToDB(_ linear: Double) -> Double {
+    guard linear > 0 else { return -120 }
+    return min(max(20 * log10(linear), -120), 0)
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

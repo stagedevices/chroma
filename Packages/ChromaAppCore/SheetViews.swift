@@ -14,22 +14,63 @@ struct ModePickerSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var draftState: ModePickerDraftState
+    @State private var pageMotionToken = UUID()
+    @State private var applyMotionToken = UUID()
+
+    init(sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+        self.sessionViewModel = sessionViewModel
+        self.dismiss = dismiss
+        _draftState = State(initialValue: ModePickerDraftState(activeModeID: sessionViewModel.session.activeModeID))
+    }
+
+    private var selectedModeIDBinding: Binding<VisualModeID> {
+        Binding(
+            get: { draftState.selectedModeID },
+            set: { nextModeID in
+                draftState.preview(nextModeID)
+            }
+        )
+    }
+
+    private var selectedModeDescriptor: VisualModeDescriptor {
+        sessionViewModel.availableModes.first(where: { $0.id == draftState.selectedModeID })
+            ?? sessionViewModel.activeModeDescriptor
+    }
+
+    private var selectedModePresentation: ModePickerHeroPresentation {
+        modePickerHeroPresentation(for: selectedModeDescriptor.id)
+    }
+
     var body: some View {
         NavigationStack {
-            List(sessionViewModel.availableModes) { mode in
-                Button {
-                    sessionViewModel.selectMode(mode.id)
-                    dismiss()
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(mode.name)
-                            .font(ChromaTypography.sheetRowTitle)
-                        Text(mode.summary)
-                            .font(ChromaTypography.bodySecondary)
-                            .foregroundStyle(.secondary)
+            VStack(spacing: 14) {
+                TabView(selection: selectedModeIDBinding) {
+                    ForEach(sessionViewModel.availableModes) { mode in
+                        let presentation = modePickerHeroPresentation(for: mode.id)
+                        ModePickerHeroPage(
+                            mode: mode,
+                            presentation: presentation,
+                            isSelected: mode.id == draftState.selectedModeID,
+                            pageMotionToken: pageMotionToken,
+                            reduceMotion: reduceMotion
+                        )
+                        .tag(mode.id)
                     }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                modePaginationDots
+                    .padding(.top, 2)
+
+                applyButton
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
             .font(ChromaTypography.body)
             .navigationTitle("MODES")
             .navigationBarTitleDisplayMode(.inline)
@@ -38,6 +79,291 @@ struct ModePickerSheet: View {
                     SheetToolbarCloseButton(action: dismiss)
                 }
             }
+            .onChange(of: draftState.selectedModeID) { _, _ in
+                guard !reduceMotion else { return }
+                pageMotionToken = UUID()
+            }
+            .onChange(of: sessionViewModel.session.activeModeID) { _, activeModeID in
+                if draftState.initialModeID == activeModeID {
+                    return
+                }
+                draftState = ModePickerDraftState(activeModeID: activeModeID)
+            }
+            .onAppear {
+                if sessionViewModel.availableModes.contains(where: { $0.id == draftState.selectedModeID }) {
+                    return
+                }
+                if let first = sessionViewModel.availableModes.first?.id {
+                    draftState = ModePickerDraftState(activeModeID: first)
+                }
+            }
+        }
+    }
+
+    private var modePaginationDots: some View {
+        HStack(spacing: 8) {
+            ForEach(sessionViewModel.availableModes) { mode in
+                let isActive = mode.id == draftState.selectedModeID
+                Capsule()
+                    .fill(
+                        isActive
+                            ? selectedModePresentation.accentColor.opacity(sessionViewModel.isLightGlassAppearance ? 0.94 : 0.98)
+                            : Color.secondary.opacity(sessionViewModel.isLightGlassAppearance ? 0.35 : 0.48)
+                    )
+                    .frame(width: isActive ? 24 : 8, height: 8)
+                    .animation(.spring(response: 0.26, dampingFraction: 0.82), value: draftState.selectedModeID)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var applyButton: some View {
+        Button {
+            if !reduceMotion {
+                applyMotionToken = UUID()
+            }
+            performImpactHaptic()
+            sessionViewModel.selectMode(draftState.activeModeAfterApply())
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                applyIcon
+                Text("SWITCH TO \(selectedModeDescriptor.name.uppercased())")
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .tracking(0.6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .modePickerApplyButtonBackground(
+                accentGradient: selectedModePresentation.accentGradient,
+                borderColor: selectedModePresentation.accentColor,
+                isLightAppearance: sessionViewModel.isLightGlassAppearance
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Applies the selected mode and closes this sheet.")
+    }
+
+    @ViewBuilder
+    private var applyIcon: some View {
+        let icon = Image(systemName: selectedModePresentation.systemImage)
+            .font(.system(size: 18, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.96),
+                selectedModePresentation.accentColor
+            )
+            .frame(width: 34, height: 34)
+            .background(
+                sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: applyMotionToken)
+        } else {
+            icon
+        }
+    }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
+    }
+}
+
+struct ModePickerDraftState {
+    let initialModeID: VisualModeID
+    private(set) var selectedModeID: VisualModeID
+
+    init(activeModeID: VisualModeID) {
+        initialModeID = activeModeID
+        selectedModeID = activeModeID
+    }
+
+    mutating func preview(_ modeID: VisualModeID) {
+        selectedModeID = modeID
+    }
+
+    func activeModeAfterDismissWithoutApply() -> VisualModeID {
+        initialModeID
+    }
+
+    func activeModeAfterApply() -> VisualModeID {
+        selectedModeID
+    }
+}
+
+struct ModePickerHeroPresentation {
+    let systemImage: String
+    let tagline: String
+    let behaviorTags: [String]
+    let accentStartHue: Double
+    let accentEndHue: Double
+
+    var accentColor: Color {
+        Color(hue: accentStartHue, saturation: 0.80, brightness: 0.96)
+    }
+
+    var accentGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(hue: accentStartHue, saturation: 0.82, brightness: 0.95),
+                Color(hue: accentEndHue, saturation: 0.84, brightness: 0.98),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
+func modePickerHeroPresentationMap() -> [VisualModeID: ModePickerHeroPresentation] {
+    [
+        .colorShift: ModePickerHeroPresentation(
+            systemImage: "paintpalette.fill",
+            tagline: "Flat Hue Instrument",
+            behaviorTags: ["Tone-Locked", "Directional PWM", "Color Feedback"],
+            accentStartHue: 0.56,
+            accentEndHue: 0.82
+        ),
+        .prismField: ModePickerHeroPresentation(
+            systemImage: "diamond.fill",
+            tagline: "Refracted Stage Flow",
+            behaviorTags: ["Facet Field", "Dispersion", "Attack Shards"],
+            accentStartHue: 0.62,
+            accentEndHue: 0.88
+        ),
+        .tunnelCels: ModePickerHeroPresentation(
+            systemImage: "square.stack.3d.up.fill",
+            tagline: "Attack Shapes in Depth",
+            behaviorTags: ["ADSR Cels", "Infinite Tunnel", "Variant Stacks"],
+            accentStartHue: 0.50,
+            accentEndHue: 0.70
+        ),
+        .fractalCaustics: ModePickerHeroPresentation(
+            systemImage: "sparkles",
+            tagline: "Orbit-Driven Fractal Field",
+            behaviorTags: ["Julia Core", "Pulse Events", "Palette Banks"],
+            accentStartHue: 0.74,
+            accentEndHue: 0.96
+        ),
+        .riemannCorridor: ModePickerHeroPresentation(
+            systemImage: "function",
+            tagline: "Classic Mandelbrot Flight",
+            behaviorTags: ["Boundary Zoom", "Guided POIs", "Stream Variants"],
+            accentStartHue: 0.60,
+            accentEndHue: 0.84
+        ),
+    ]
+}
+
+func modePickerHeroPresentation(for modeID: VisualModeID) -> ModePickerHeroPresentation {
+    modePickerHeroPresentationMap()[modeID] ?? ModePickerHeroPresentation(
+        systemImage: "sparkles",
+        tagline: "Visual Mode",
+        behaviorTags: ["Live", "Reactive", "Stage"],
+        accentStartHue: 0.56,
+        accentEndHue: 0.80
+    )
+}
+
+private struct ModePickerHeroPage: View {
+    let mode: VisualModeDescriptor
+    let presentation: ModePickerHeroPresentation
+    let isSelected: Bool
+    let pageMotionToken: UUID
+    let reduceMotion: Bool
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 2)
+
+            ZStack {
+                Circle()
+                    .fill(presentation.accentGradient.opacity(0.24))
+                    .overlay {
+                        Circle()
+                            .stroke(presentation.accentColor.opacity(0.34), lineWidth: 1)
+                    }
+                    .frame(width: 164, height: 164)
+
+                heroIcon
+                
+            }
+            .frame(width: 190, height: 190)
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            VStack(spacing: 8) {
+                Text(mode.name.uppercased())
+                    .font(.system(size: 31, weight: .black, design: .rounded))
+                    .tracking(0.8)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+         //       Text(presentation.tagline)
+           //         .font(ChromaTypography.sheetRowTitle)
+             //       .foregroundStyle(.secondary)
+               //     .multilineTextAlignment(.center)
+                 //   .lineLimit(1)
+                   // .minimumScaleFactor(0.82)
+
+                Text(mode.summary)
+                    .font(ChromaTypography.bodySecondary)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .padding(.horizontal, 8)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(presentation.behaviorTags.prefix(3), id: \.self) { tag in
+                    Text(tag.uppercased())
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .tracking(0.6)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(
+                            Color.secondary.opacity(0.15),
+                            in: Capsule()
+                        )
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 10)
+        .padding(.horizontal, 10)
+    }
+
+    @ViewBuilder
+    private var heroIcon: some View {
+        let icon = Image(systemName: presentation.systemImage)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 86, height: 86)
+            .padding(.top, 6)
+            .frame(width: 96, height: 96)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white.opacity(0.96), presentation.accentColor)
+
+        if reduceMotion || !isSelected {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: pageMotionToken)
+        } else {
+            icon
         }
     }
 }
@@ -112,39 +438,149 @@ struct FeedbackSetupSheet: View {
     }
 }
 
+struct TunnelVariantPickerPresentation: Identifiable, Equatable {
+    let index: Int
+    let title: String
+    let summary: String
+    let systemImage: String
+    let tintHue: Double
+
+    var id: Int { index }
+
+    var tintColor: Color {
+        Color(hue: tintHue, saturation: 0.80, brightness: 0.96)
+    }
+}
+
+func tunnelVariantPickerPresentationCatalog() -> [TunnelVariantPickerPresentation] {
+    [
+        TunnelVariantPickerPresentation(
+            index: 0,
+            title: "Cel Cards",
+            summary: "Flat graphic cards with clean tunnel silhouettes.",
+            systemImage: "square.on.square.fill",
+            tintHue: 0.57
+        ),
+        TunnelVariantPickerPresentation(
+            index: 1,
+            title: "Prism Shards",
+            summary: "Facet-driven shard silhouettes with angular edges.",
+            systemImage: "diamond.fill",
+            tintHue: 0.67
+        ),
+        TunnelVariantPickerPresentation(
+            index: 2,
+            title: "Glyph Slabs",
+            summary: "Thicker slab silhouettes with bold panel feel.",
+            systemImage: "rectangle.stack.fill",
+            tintHue: 0.50
+        ),
+    ]
+}
+
+struct PalettePickerPresentation: Identifiable, Equatable {
+    let index: Int
+    let name: String
+    let systemImage: String
+    let swatchHues: [Double]
+
+    var id: Int { index }
+
+    var accentColor: Color {
+        Color(hue: swatchHues.first ?? 0.56, saturation: 0.82, brightness: 0.96)
+    }
+}
+
+func chromaPalettePickerPresentationCatalog() -> [PalettePickerPresentation] {
+    [
+        PalettePickerPresentation(index: 0, name: "Aurora", systemImage: "sparkles", swatchHues: [0.47, 0.55, 0.65, 0.78]),
+        PalettePickerPresentation(index: 1, name: "Solar", systemImage: "sun.max.fill", swatchHues: [0.07, 0.10, 0.14, 0.18]),
+        PalettePickerPresentation(index: 2, name: "Abyss", systemImage: "moon.stars.fill", swatchHues: [0.54, 0.60, 0.67, 0.74]),
+        PalettePickerPresentation(index: 3, name: "Neon", systemImage: "bolt.fill", swatchHues: [0.86, 0.93, 0.02, 0.12]),
+        PalettePickerPresentation(index: 4, name: "Infra", systemImage: "flame.fill", swatchHues: [0.99, 0.04, 0.08, 0.13]),
+        PalettePickerPresentation(index: 5, name: "Glass", systemImage: "drop.fill", swatchHues: [0.52, 0.57, 0.62, 0.69]),
+        PalettePickerPresentation(index: 6, name: "Mono", systemImage: "circle.lefthalf.filled.inverse", swatchHues: [0.00, 0.00, 0.00, 0.00]),
+        PalettePickerPresentation(index: 7, name: "Prism", systemImage: "diamond.fill", swatchHues: [0.58, 0.69, 0.82, 0.92]),
+    ]
+}
+
+struct PresetPickerDraftState {
+    let initialPresetID: UUID?
+    private(set) var selectedPresetID: UUID?
+
+    init(activePresetID: UUID?, presets: [Preset]) {
+        initialPresetID = activePresetID
+        if let activePresetID, presets.contains(where: { $0.id == activePresetID }) {
+            selectedPresetID = activePresetID
+        } else {
+            selectedPresetID = presets.first?.id
+        }
+    }
+
+    mutating func preview(_ presetID: UUID?) {
+        selectedPresetID = presetID
+    }
+
+    func selectedPreset(in presets: [Preset]) -> Preset? {
+        guard let selectedPresetID else { return nil }
+        return presets.first(where: { $0.id == selectedPresetID })
+    }
+
+    func activePresetAfterDismissWithoutApply() -> UUID? {
+        initialPresetID
+    }
+
+    func activePresetAfterApply() -> UUID? {
+        selectedPresetID
+    }
+}
+
 struct TunnelVariantPickerSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
 
-    private let options: [(index: Int, title: String, summary: String)] = [
-        (0, "Cel Cards", "Flat graphic cards with clean tunnel silhouettes."),
-        (1, "Prism Shards", "Facet-driven shard silhouettes with angular edges."),
-        (2, "Glyph Slabs", "Thicker slab silhouettes with bold panel feel."),
-    ]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectionMotionToken = UUID()
+    private let options = tunnelVariantPickerPresentationCatalog()
 
     var body: some View {
         NavigationStack {
-            List(options, id: \.index) { option in
-                Button {
-                    sessionViewModel.setTunnelVariant(index: option.index)
-                    dismiss()
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(option.title)
-                                .font(ChromaTypography.sheetRowTitle)
-                            Text(option.summary)
-                                .font(ChromaTypography.bodySecondary)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if option.title == sessionViewModel.tunnelVariantLabel {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.accentColor)
+            VStack(spacing: 12) {
+                Text("Choose the shape family used for attack-spawned tunnel cels.")
+                    .font(ChromaTypography.bodySecondary)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 8)
+
+                VStack(spacing: 10) {
+                    ForEach(options) { option in
+                        VariantSelectorTile(
+                            title: option.title,
+                            subtitle: option.summary,
+                            systemImage: option.systemImage,
+                            accentColor: option.tintColor,
+                            isLightAppearance: sessionViewModel.isLightGlassAppearance,
+                            isSelected: option.index == sessionViewModel.tunnelVariantSelectionIndex,
+                            motionToken: selectionMotionToken,
+                            reduceMotion: reduceMotion
+                        ) {
+                            if !reduceMotion {
+                                selectionMotionToken = UUID()
+                            }
+                            performImpactHaptic()
+                            sessionViewModel.setTunnelVariant(index: option.index)
+                            dismiss()
                         }
                     }
                 }
+                .padding(.horizontal, 1)
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
             .font(ChromaTypography.body)
             .navigationTitle("VARIANT")
             .navigationBarTitleDisplayMode(.inline)
@@ -155,40 +591,28 @@ struct TunnelVariantPickerSheet: View {
             }
         }
     }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
+    }
 }
 
 struct FractalPalettePickerSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
 
-    private let paletteNames = ["Aurora", "Solar", "Abyss", "Neon", "Infra", "Glass", "Mono", "Prism"]
-
     var body: some View {
-        NavigationStack {
-            List(Array(paletteNames.enumerated()), id: \.offset) { offset, name in
-                Button {
-                    sessionViewModel.setFractalPaletteVariant(index: offset)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(name)
-                            .font(ChromaTypography.sheetRowTitle)
-                        Spacer()
-                        if name == sessionViewModel.fractalPaletteLabel {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-                }
-            }
-            .font(ChromaTypography.body)
-            .navigationTitle("PALETTE")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    SheetToolbarCloseButton(action: dismiss)
-                }
-            }
+        PalettePickerSheetContent(
+            title: "PALETTE",
+            subtitle: "Select a palette bank for Fractal Caustics.",
+            selectedIndex: sessionViewModel.fractalPaletteSelectionIndex,
+            isLightAppearance: sessionViewModel.isLightGlassAppearance,
+            dismiss: dismiss
+        ) { index in
+            sessionViewModel.setFractalPaletteVariant(index: index)
         }
     }
 }
@@ -197,34 +621,15 @@ struct RiemannPalettePickerSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
 
-    private let paletteNames = ["Aurora", "Solar", "Abyss", "Neon", "Infra", "Glass", "Mono", "Prism"]
-
     var body: some View {
-        NavigationStack {
-            List(Array(paletteNames.enumerated()), id: \.offset) { offset, name in
-                Button {
-                    sessionViewModel.setRiemannPaletteVariant(index: offset)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(name)
-                            .font(ChromaTypography.sheetRowTitle)
-                        Spacer()
-                        if name == sessionViewModel.riemannPaletteLabel {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-                }
-            }
-            .font(ChromaTypography.body)
-            .navigationTitle("PALETTE")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    SheetToolbarCloseButton(action: dismiss)
-                }
-            }
+        PalettePickerSheetContent(
+            title: "PALETTE",
+            subtitle: "Select a palette bank for Mandelbrot Navigator.",
+            selectedIndex: sessionViewModel.riemannPaletteSelectionIndex,
+            isLightAppearance: sessionViewModel.isLightGlassAppearance,
+            dismiss: dismiss
+        ) { index in
+            sessionViewModel.setRiemannPaletteVariant(index: index)
         }
     }
 }
@@ -232,45 +637,41 @@ struct RiemannPalettePickerSheet: View {
 struct PresetBrowserSheet: View {
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var draftState: PresetPickerDraftState
+    @State private var selectionMotionToken = UUID()
+    @State private var applyMotionToken = UUID()
     @State private var renamingPreset: Preset?
     @State private var renameDraft: String = ""
     @State private var deletingPreset: Preset?
 
+    init(sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+        self.sessionViewModel = sessionViewModel
+        self.dismiss = dismiss
+        _draftState = State(
+            initialValue: PresetPickerDraftState(
+                activePresetID: sessionViewModel.session.activePresetID,
+                presets: sessionViewModel.presetsForActiveMode
+            )
+        )
+    }
+
+    private var selectedPreset: Preset? {
+        draftState.selectedPreset(in: sessionViewModel.presetsForActiveMode)
+    }
+
+    private var presetsForActiveMode: [Preset] {
+        sessionViewModel.presetsForActiveMode
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                if sessionViewModel.presetsForActiveMode.isEmpty {
-                    Text("No presets for \(sessionViewModel.activeModeDescriptor.name) yet.")
-                        .font(ChromaTypography.bodySecondary)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(sessionViewModel.presetsForActiveMode) { preset in
-                        Button {
-                            sessionViewModel.applyPreset(preset)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(preset.name)
-                                    .font(ChromaTypography.sheetRowTitle)
-                                Text(ParameterCatalog.modeDescriptor(for: preset.modeID).summary)
-                                    .font(ChromaTypography.bodySecondary)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Rename") {
-                                renamingPreset = preset
-                                renameDraft = preset.name
-                            }
-                            .tint(.blue)
-
-                            Button("Delete", role: .destructive) {
-                                deletingPreset = preset
-                            }
-                        }
-                    }
-                }
-            }
+            presetBrowserContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
             .font(ChromaTypography.body)
             .navigationTitle("PRESETS")
             .navigationBarTitleDisplayMode(.inline)
@@ -278,6 +679,19 @@ struct PresetBrowserSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     SheetToolbarCloseButton(action: dismiss)
                 }
+            }
+            .onChange(of: draftState.selectedPresetID) { _, _ in
+                guard !reduceMotion else { return }
+                selectionMotionToken = UUID()
+            }
+            .onChange(of: presetsForActiveMode.map(\.id)) { _, _ in
+                reconcileDraftSelection()
+            }
+            .onChange(of: sessionViewModel.session.activeModeID) { _, _ in
+                draftState = PresetPickerDraftState(
+                    activePresetID: sessionViewModel.session.activePresetID,
+                    presets: presetsForActiveMode
+                )
             }
             .alert(
                 "Rename Preset",
@@ -315,6 +729,195 @@ struct PresetBrowserSheet: View {
                 Text("“\(preset.name)” will be removed.")
             }
         }
+    }
+
+    @ViewBuilder
+    private var presetBrowserContent: some View {
+        VStack(spacing: 14) {
+            if presetsForActiveMode.isEmpty {
+                presetEmptyState
+            } else {
+                presetScrollList
+                applyPresetButton
+            }
+        }
+    }
+
+    private var presetScrollList: some View {
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(presetsForActiveMode) { preset in
+                    let presentation = modePickerHeroPresentation(for: preset.modeID)
+                    PresetSelectorTile(
+                        title: preset.name,
+                        subtitle: ParameterCatalog.modeDescriptor(for: preset.modeID).name,
+                        systemImage: presentation.systemImage,
+                        accentColor: presentation.accentColor,
+                        isSelected: preset.id == draftState.selectedPresetID,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance,
+                        motionToken: selectionMotionToken,
+                        reduceMotion: reduceMotion
+                    ) {
+                        if !reduceMotion {
+                            selectionMotionToken = UUID()
+                        }
+                        performImpactHaptic()
+                        draftState.preview(preset.id)
+                    }
+                    .contextMenu {
+                        presetContextMenu(for: preset)
+                    }
+                }
+            }
+            .padding(.horizontal, 1)
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func presetContextMenu(for preset: Preset) -> some View {
+        if preset.id == draftState.selectedPresetID {
+            Button("Rename") {
+                renamingPreset = preset
+                renameDraft = preset.name
+            }
+            Button("Delete", role: .destructive) {
+                deletingPreset = preset
+            }
+        }
+    }
+
+    private var presetEmptyState: some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 4)
+            Image(systemName: "square.stack.3d.up.slash")
+                .font(.system(size: 32, weight: .semibold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(
+                    sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.88) : Color.white.opacity(0.94),
+                    Color.secondary.opacity(0.65)
+                )
+            Text("No presets for \(sessionViewModel.activeModeDescriptor.name) yet.")
+                .font(ChromaTypography.sheetRowTitle)
+                .multilineTextAlignment(.center)
+            Text("Use the save action on the live controls tile to capture a new preset.")
+                .font(ChromaTypography.bodySecondary)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 16)
+        .recorderGlassCardBackground(
+            cornerRadius: 18,
+            isLightAppearance: sessionViewModel.isLightGlassAppearance
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var applyPresetButton: some View {
+        Button {
+            guard let selectedPreset else { return }
+            if !reduceMotion {
+                applyMotionToken = UUID()
+            }
+            performImpactHaptic()
+            sessionViewModel.applyPreset(selectedPreset)
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                applyIcon
+                Text("APPLY PRESET")
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .tracking(0.6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .modePickerApplyButtonBackground(
+                accentGradient: selectedPresetGradient,
+                borderColor: selectedPresetTint,
+                isLightAppearance: sessionViewModel.isLightGlassAppearance
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(selectedPreset == nil)
+        .opacity(selectedPreset == nil ? 0.45 : 1)
+    }
+
+    @ViewBuilder
+    private var applyIcon: some View {
+        let icon = Image(systemName: selectedPresetSystemImage)
+            .font(.system(size: 18, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.96),
+                selectedPresetTint
+            )
+            .frame(width: 34, height: 34)
+            .background(
+                sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: applyMotionToken)
+        } else {
+            icon
+        }
+    }
+
+    private var selectedPresetSystemImage: String {
+        selectedPreset.map { modePickerHeroPresentation(for: $0.modeID).systemImage } ?? "square.stack.3d.up"
+    }
+
+    private var selectedPresetTint: Color {
+        selectedPreset.map { modePickerHeroPresentation(for: $0.modeID).accentColor } ?? .blue
+    }
+
+    private var selectedPresetGradient: LinearGradient {
+        selectedPreset.map { modePickerHeroPresentation(for: $0.modeID).accentGradient }
+            ?? LinearGradient(
+                colors: [Color.blue.opacity(0.82), Color.indigo.opacity(0.82)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+    }
+
+    private func reconcileDraftSelection() {
+        let presets = sessionViewModel.presetsForActiveMode
+        if presets.isEmpty {
+            draftState.preview(nil)
+            return
+        }
+
+        if let selectedPresetID = draftState.selectedPresetID,
+           presets.contains(where: { $0.id == selectedPresetID }) {
+            return
+        }
+
+        if let activePresetID = sessionViewModel.session.activePresetID,
+           presets.contains(where: { $0.id == activePresetID }) {
+            draftState.preview(activePresetID)
+            return
+        }
+
+        draftState.preview(presets.first?.id)
+    }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
     }
 }
 
@@ -763,14 +1366,23 @@ struct SettingsDiagnosticsSheet: View {
     @State private var inkTransitionProgress: CGFloat = 0.001
     @State private var inkTransitionOpacity: Double = 0
     @State private var diagnosticsExpanded = false
+    @State private var showsResetSessionConfirmation = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 List {
+                    performanceSection
+                    audioCalibrationSection
+                    if sessionViewModel.session.activeModeID == .riemannCorridor {
+                        navigationSection
+                    }
+                    modeDefaultsSection
+                    sessionRecoverySection
                     audioInputSection
                     outputSection
                     appearanceSection
+                    aboutSection
                     exportSection
                     diagnosticsSection
                 }
@@ -793,6 +1405,272 @@ struct SettingsDiagnosticsSheet: View {
                 )
                 .allowsHitTesting(false)
             }
+        }
+        .confirmationDialog(
+            "Reset to clean state?",
+            isPresented: $showsResetSessionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Session", role: .destructive) {
+                Task {
+                    await sessionViewModel.resetToCleanState()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears current session state and live parameters. Presets and mode defaults are preserved.")
+        }
+    }
+
+    private var performanceSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    ForEach(PerformanceMode.allCases, id: \.self) { mode in
+                        ExportSettingTileButton(
+                            title: mode.label,
+                            subtitle: nil,
+                            isSelected: sessionViewModel.session.performanceSettings.mode == mode,
+                            isEnabled: true,
+                            tintColor: exportSettingsTintColor,
+                            isLightAppearance: sessionViewModel.isLightGlassAppearance
+                        ) {
+                            sessionViewModel.setPerformanceMode(mode)
+                        }
+                    }
+                }
+
+                ExportSettingTileButton(
+                    title: "Thermal Fallback",
+                    subtitle: sessionViewModel.thermalFallbackIsActive ? "Active" : "Standby",
+                    isSelected: sessionViewModel.session.performanceSettings.thermalAwareFallbackEnabled,
+                    isEnabled: true,
+                    tintColor: exportSettingsTintColor,
+                    isLightAppearance: sessionViewModel.isLightGlassAppearance
+                ) {
+                    sessionViewModel.setThermalAwareFallbackEnabled(!sessionViewModel.session.performanceSettings.thermalAwareFallbackEnabled)
+                }
+
+                if sessionViewModel.thermalFallbackIsActive {
+                    Text("Thermal state is elevated. Safe FPS policy is temporarily forced.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Performance")
+        }
+    }
+
+    private var audioCalibrationSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                ExportSettingTileButton(
+                    title: sessionViewModel.isCalibratingInput ? "Calibrating…" : "Calibrate Room Noise",
+                    subtitle: sessionViewModel.isCalibratingInput ? "Capturing 2.5s ambient window" : "Capture venue floor and apply recommendations",
+                    isSelected: sessionViewModel.isCalibratingInput,
+                    isEnabled: !sessionViewModel.isCalibratingInput,
+                    tintColor: exportSettingsTintColor,
+                    isLightAppearance: sessionViewModel.isLightGlassAppearance
+                ) {
+                    Task {
+                        await sessionViewModel.calibrateRoomNoise()
+                    }
+                }
+
+                calibrationStepperRow(
+                    title: "Attack Gate",
+                    valueLabel: String(format: "%.1f dB", sessionViewModel.session.audioCalibrationSettings.attackThresholdDB),
+                    onDecrement: { sessionViewModel.adjustAttackThreshold(by: -0.5) },
+                    onIncrement: { sessionViewModel.adjustAttackThreshold(by: 0.5) }
+                )
+
+                calibrationStepperRow(
+                    title: "Silence Gate",
+                    valueLabel: String(format: "%.3f", sessionViewModel.session.audioCalibrationSettings.silenceGateThreshold),
+                    onDecrement: { sessionViewModel.adjustSilenceGateThreshold(by: -0.005) },
+                    onIncrement: { sessionViewModel.adjustSilenceGateThreshold(by: 0.005) }
+                )
+
+                if let calibrationStatusMessage = sessionViewModel.calibrationStatusMessage {
+                    Text(calibrationStatusMessage)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Audio Calibration")
+        }
+    }
+
+    private var navigationSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    ExportSettingTileButton(
+                        title: "Guided Zoom",
+                        subtitle: nil,
+                        isSelected: !sessionViewModel.riemannNavigationIsFreeFlight,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.setRiemannNavigationMode(freeFlight: false)
+                    }
+                    ExportSettingTileButton(
+                        title: "Free Flight",
+                        subtitle: nil,
+                        isSelected: sessionViewModel.riemannNavigationIsFreeFlight,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.setRiemannNavigationMode(freeFlight: true)
+                    }
+                }
+
+                calibrationStepperRow(
+                    title: "Steering Strength",
+                    valueLabel: String(format: "%.2f", sessionViewModel.riemannSteeringStrength),
+                    onDecrement: { sessionViewModel.adjustRiemannSteeringStrength(by: -0.04) },
+                    onIncrement: { sessionViewModel.adjustRiemannSteeringStrength(by: 0.04) }
+                )
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Navigation")
+        }
+    }
+
+    private var modeDefaultsSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    ExportSettingTileButton(
+                        title: "Set Current as Default",
+                        subtitle: nil,
+                        isSelected: false,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.setCurrentModeAsDefault()
+                    }
+
+                    ExportSettingTileButton(
+                        title: "Reset Mode Defaults",
+                        subtitle: nil,
+                        isSelected: false,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.resetCurrentModeDefaults()
+                    }
+                }
+
+                if let modeDefaultsStatusMessage = sessionViewModel.modeDefaultsStatusMessage {
+                    Text(modeDefaultsStatusMessage)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Mode Defaults")
+        }
+    }
+
+    private var sessionRecoverySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    ExportSettingTileButton(
+                        title: "Auto-save Session",
+                        subtitle: sessionViewModel.session.sessionRecoverySettings.autoSaveEnabled ? "On" : "Off",
+                        isSelected: sessionViewModel.session.sessionRecoverySettings.autoSaveEnabled,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.setSessionAutoSaveEnabled(!sessionViewModel.session.sessionRecoverySettings.autoSaveEnabled)
+                    }
+                    ExportSettingTileButton(
+                        title: "Restore on Launch",
+                        subtitle: sessionViewModel.session.sessionRecoverySettings.restoreOnLaunchEnabled ? "On" : "Off",
+                        isSelected: sessionViewModel.session.sessionRecoverySettings.restoreOnLaunchEnabled,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        sessionViewModel.setRestoreOnLaunchEnabled(!sessionViewModel.session.sessionRecoverySettings.restoreOnLaunchEnabled)
+                    }
+                }
+
+                ExportSettingTileButton(
+                    title: "Reset to Clean State",
+                    subtitle: "Panic action (keeps presets/default libraries)",
+                    isSelected: false,
+                    isEnabled: true,
+                    tintColor: .red,
+                    isLightAppearance: sessionViewModel.isLightGlassAppearance
+                ) {
+                    showsResetSessionConfirmation = true
+                }
+
+                if let sessionRecoveryStatusMessage = sessionViewModel.sessionRecoveryStatusMessage {
+                    Text(sessionRecoveryStatusMessage)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Session Recovery")
+        }
+    }
+
+    @ViewBuilder
+    private func calibrationStepperRow(
+        title: String,
+        valueLabel: String,
+        onDecrement: @escaping () -> Void,
+        onIncrement: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            ExportSettingTileButton(
+                title: "−",
+                subtitle: nil,
+                isSelected: false,
+                isEnabled: true,
+                tintColor: exportSettingsTintColor,
+                isLightAppearance: sessionViewModel.isLightGlassAppearance,
+                action: onDecrement
+            )
+            .frame(width: 72)
+
+            Text("\(title): \(valueLabel)")
+                .font(ChromaTypography.metric.monospacedDigit())
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+                .recorderGlassCardBackground(
+                    cornerRadius: 12,
+                    isLightAppearance: sessionViewModel.isLightGlassAppearance
+                )
+
+            ExportSettingTileButton(
+                title: "+",
+                subtitle: nil,
+                isSelected: false,
+                isEnabled: true,
+                tintColor: exportSettingsTintColor,
+                isLightAppearance: sessionViewModel.isLightGlassAppearance,
+                action: onIncrement
+            )
+            .frame(width: 72)
         }
     }
 
@@ -879,6 +1757,47 @@ struct SettingsDiagnosticsSheet: View {
             .listRowSeparator(.hidden)
         } header: {
             sectionHeader("Appearance")
+        }
+    }
+
+    private var aboutSection: some View {
+        Section {
+            NavigationLink {
+                AboutChromaView(isLightAppearance: sessionViewModel.isLightGlassAppearance)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(exportSettingsTintColor)
+                        .frame(width: 34, height: 34)
+                        .background(
+                            sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("About Chroma")
+                            .font(ChromaTypography.sheetRowTitle)
+                        Text("Website, privacy, support, and version info.")
+                            .font(ChromaTypography.bodySecondary)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
+                .recorderGlassCardBackground(
+                    cornerRadius: 16,
+                    isLightAppearance: sessionViewModel.isLightGlassAppearance
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 2)
+            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        } header: {
+            sectionHeader("About")
         }
     }
 
@@ -1056,6 +1975,247 @@ struct SettingsDiagnosticsSheet: View {
             inkTransitionOpacity = 0
         }
     }
+}
+
+struct AboutChromaLink: Equatable, Identifiable {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let urlString: String
+
+    var id: String {
+        title
+    }
+}
+
+func chromaAboutLinkCatalog() -> [AboutChromaLink] {
+    [
+        AboutChromaLink(
+            title: "Chroma",
+            subtitle: "Product site and release notes",
+            systemImage: "globe",
+            urlString: "https://stagedevices.github.io/chroma"
+        ),
+        AboutChromaLink(
+            title: "Privacy",
+            subtitle: "Privacy policy and data handling",
+            systemImage: "hand.raised",
+            urlString: "https://stagedevices.github.io/chroma/privacy"
+        ),
+        AboutChromaLink(
+            title: "Support",
+            subtitle: "Get help and contact options",
+            systemImage: "questionmark.circle",
+            urlString: "https://stagedevices.github.io/chroma/support"
+        ),
+    ]
+}
+
+func chromaAboutVersionString(infoDictionary: [String: Any]?) -> String {
+    let version = (infoDictionary?["CFBundleShortVersionString"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let build = (infoDictionary?["CFBundleVersion"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let validVersion = (version?.isEmpty == false) ? version : nil
+    let validBuild = (build?.isEmpty == false) ? build : nil
+
+    switch (validVersion, validBuild) {
+    case let (version?, build?):
+        return "\(version) (\(build))"
+    case let (version?, nil):
+        return version
+    case let (nil, build?):
+        return "Build \(build)"
+    case (nil, nil):
+        return "Version unavailable"
+    }
+}
+
+private struct AboutChromaView: View {
+    let isLightAppearance: Bool
+
+    @Environment(\.openURL) private var openURL
+    @State private var copyStatusMessage: String?
+
+    private var aboutLinks: [AboutChromaLink] { chromaAboutLinkCatalog() }
+    private var versionString: String { chromaAboutVersionString(infoDictionary: Bundle.main.infoDictionary) }
+    private var versionAndBuild: (version: String, build: String) {
+        chromaAboutVersionBuild(infoDictionary: Bundle.main.infoDictionary)
+    }
+    private var appURL: URL? {
+        URL(string: "https://stagedevices.github.io/chroma")
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.cyan.opacity(isLightAppearance ? 0.28 : 0.22),
+                                            Color.indigo.opacity(isLightAppearance ? 0.20 : 0.30),
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            Image(systemName: "waveform.path.ecg.rectangle")
+                                .font(.system(size: 22, weight: .semibold))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(
+                                    isLightAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.92),
+                                    Color.cyan.opacity(0.90)
+                                )
+                        }
+                        .frame(width: 52, height: 52)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Chroma")
+                                .font(.system(size: 34, weight: .black, design: .default))
+                                .lineLimit(1)
+                            Text("Live audio-reactive visual instrument")
+                                .font(ChromaTypography.bodySecondary)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Text("Designed for stage performance, projection output, and clean capture workflows.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        AboutMetaPill(title: "Version", value: versionAndBuild.version, isLightAppearance: isLightAppearance)
+                        AboutMetaPill(title: "Build", value: versionAndBuild.build, isLightAppearance: isLightAppearance)
+                        Spacer(minLength: 0)
+                    }
+                }
+                .padding(16)
+                .recorderGlassCardBackground(cornerRadius: 18, isLightAppearance: isLightAppearance)
+                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } header: {
+                Text("Overview")
+                    .font(ChromaTypography.sheetSectionHeader)
+                    .tracking(1.4)
+            }
+
+            Section {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], alignment: .leading, spacing: 10) {
+                    ForEach(Array(aboutLinks.enumerated()), id: \.element.id) { index, link in
+                        let tile = AboutQuickActionTile(
+                            link: link,
+                            isLightAppearance: isLightAppearance
+                        ) {
+                            open(link: link)
+                        }
+                        if index == aboutLinks.count - 1 {
+                            tile.gridCellColumns(2)
+                        } else {
+                            tile
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } header: {
+                Text("Actions")
+                    .font(ChromaTypography.sheetSectionHeader)
+                    .tracking(1.4)
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        AboutUtilityPillButton(
+                            title: "Copy Version",
+                            systemImage: "document.on.document",
+                            isLightAppearance: isLightAppearance
+                        ) {
+                            copyToClipboard(versionString, status: "Version copied")
+                        }
+                        if let appURL {
+                            ShareLink(item: appURL) {
+                                AboutUtilityPillButtonLabel(
+                                    title: "Share App Link",
+                                    systemImage: "square.and.arrow.up",
+                                    isLightAppearance: isLightAppearance
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if let copyStatusMessage {
+                        Text(copyStatusMessage)
+                            .font(ChromaTypography.bodySecondary)
+                            .foregroundStyle(.secondary)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    Text("stagedevices.github.io/chroma")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } header: {
+                Text("Details")
+                    .font(ChromaTypography.sheetSectionHeader)
+                    .tracking(1.4)
+            }
+        }
+        .font(ChromaTypography.body)
+        .navigationTitle("ABOUT")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func open(link: AboutChromaLink) {
+        guard let url = URL(string: link.urlString), url.scheme == "https", url.host != nil else {
+            return
+        }
+        openURL(url)
+    }
+
+    private func copyToClipboard(_ text: String, status: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+#if canImport(UIKit)
+        UIPasteboard.general.string = text
+#endif
+        withAnimation(.easeInOut(duration: 0.18)) {
+            copyStatusMessage = status
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            withAnimation(.easeInOut(duration: 0.20)) {
+                if copyStatusMessage == status {
+                    copyStatusMessage = nil
+                }
+            }
+        }
+    }
+}
+
+private func chromaAboutVersionBuild(infoDictionary: [String: Any]?) -> (version: String, build: String) {
+    let version = (infoDictionary?["CFBundleShortVersionString"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let build = (infoDictionary?["CFBundleVersion"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let resolvedVersion = (version?.isEmpty == false) ? version! : "Unknown"
+    let resolvedBuild = (build?.isEmpty == false) ? build! : "Unknown"
+    return (version: resolvedVersion, build: resolvedBuild)
 }
 
 private struct SettingsSurfaceSliderRow: View {
@@ -1423,6 +2583,306 @@ private func settingsExcitementModeLabel(for index: Int) -> String {
     }
 }
 
+private struct PalettePickerSheetContent: View {
+    let title: String
+    let subtitle: String
+    let selectedIndex: Int
+    let isLightAppearance: Bool
+    let dismiss: () -> Void
+    let onSelect: (Int) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectionMotionToken = UUID()
+    private let options = chromaPalettePickerPresentationCatalog()
+    private let columns = [
+        GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+        GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text(subtitle)
+                    .font(ChromaTypography.bodySecondary)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 8)
+
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(options) { option in
+                        PaletteSelectorTile(
+                            option: option,
+                            isSelected: option.index == selectedIndex,
+                            isLightAppearance: isLightAppearance,
+                            motionToken: selectionMotionToken,
+                            reduceMotion: reduceMotion
+                        ) {
+                            if !reduceMotion {
+                                selectionMotionToken = UUID()
+                            }
+                            performImpactHaptic()
+                            onSelect(option.index)
+                            dismiss()
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
+            .font(ChromaTypography.body)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetToolbarCloseButton(action: dismiss)
+                }
+            }
+        }
+    }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
+    }
+}
+
+private struct VariantSelectorTile: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let accentColor: Color
+    let isLightAppearance: Bool
+    let isSelected: Bool
+    let motionToken: UUID
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                iconView
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(ChromaTypography.sheetRowTitle)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.86)
+                }
+
+                Spacer(minLength: 8)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(accentColor.opacity(isLightAppearance ? 0.86 : 0.92))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        isSelected
+                            ? accentColor.opacity(isLightAppearance ? 0.62 : 0.56)
+                            : Color.secondary.opacity(isLightAppearance ? 0.24 : 0.30),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        let icon = Image(systemName: systemImage)
+            .font(.system(size: 17, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                isLightAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.94),
+                accentColor.opacity(isLightAppearance ? 0.84 : 0.90)
+            )
+            .frame(width: 34, height: 34)
+            .background(
+                isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: motionToken)
+        } else {
+            icon
+        }
+    }
+}
+
+private struct PaletteSelectorTile: View {
+    let option: PalettePickerPresentation
+    let isSelected: Bool
+    let isLightAppearance: Bool
+    let motionToken: UUID
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    iconView
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(option.accentColor.opacity(isLightAppearance ? 0.86 : 0.92))
+                    }
+                }
+
+                Text(option.name)
+                    .font(ChromaTypography.sheetRowTitle)
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    ForEach(Array(option.swatchHues.enumerated()), id: \.offset) { _, hue in
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(
+                                hue == 0
+                                    ? Color.white.opacity(isLightAppearance ? 0.34 : 0.24)
+                                    : Color(hue: hue, saturation: 0.82, brightness: 0.95)
+                            )
+                            .frame(height: 5)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        isSelected
+                            ? option.accentColor.opacity(isLightAppearance ? 0.62 : 0.56)
+                            : Color.secondary.opacity(isLightAppearance ? 0.24 : 0.30),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        let icon = Image(systemName: option.systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                isLightAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.94),
+                option.accentColor.opacity(isLightAppearance ? 0.84 : 0.90)
+            )
+            .frame(width: 30, height: 30)
+            .background(
+                isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: motionToken)
+        } else {
+            icon
+        }
+    }
+}
+
+private struct PresetSelectorTile: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let accentColor: Color
+    let isSelected: Bool
+    let isLightAppearance: Bool
+    let motionToken: UUID
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                iconView
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(ChromaTypography.sheetRowTitle)
+                        .lineLimit(1)
+                    Text(subtitle.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .tracking(0.7)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(accentColor.opacity(isLightAppearance ? 0.86 : 0.92))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        isSelected
+                            ? accentColor.opacity(isLightAppearance ? 0.62 : 0.56)
+                            : Color.secondary.opacity(isLightAppearance ? 0.24 : 0.30),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        let icon = Image(systemName: systemImage)
+            .font(.system(size: 17, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                isLightAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.94),
+                accentColor.opacity(isLightAppearance ? 0.84 : 0.90)
+            )
+            .frame(width: 34, height: 34)
+            .background(
+                isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: motionToken)
+        } else {
+            icon
+        }
+    }
+}
+
 private struct RecorderConsoleActionTile: View {
     let title: String
     let subtitle: String
@@ -1489,6 +2949,167 @@ private struct RecorderConsoleActionTile: View {
         } else {
             icon
         }
+    }
+}
+
+private struct AboutMetaPill: View {
+    let title: String
+    let value: String
+    let isLightAppearance: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold, design: .default))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(ChromaTypography.metric.monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+}
+
+private struct AboutQuickActionTile: View {
+    let link: AboutChromaLink
+    let isLightAppearance: Bool
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var symbolEffectToken = UUID()
+
+    var body: some View {
+        Button {
+            if !reduceMotion {
+                symbolEffectToken = UUID()
+            }
+            performImpactHaptic()
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    iconView
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+                .padding(.horizontal, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(link.title)
+                        .font(ChromaTypography.sheetRowTitle)
+                        .lineLimit(1)
+                    Text(link.subtitle)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 116, maxHeight: 116)
+            .recorderGlassCardBackground(
+                cornerRadius: 18,
+                isLightAppearance: isLightAppearance
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        let icon = Image(systemName: link.systemImage)
+            .font(.system(size: 18, weight: .semibold))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                isLightAppearance ? Color.black.opacity(0.90) : Color.white.opacity(0.92),
+                aboutAccentColor.opacity(isLightAppearance ? 0.86 : 0.88)
+            )
+            .frame(width: 32, height: 32)
+            .background(
+                isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+
+        if reduceMotion {
+            icon
+        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
+            icon.symbolEffect(.bounce, value: symbolEffectToken)
+        } else {
+            icon
+        }
+    }
+
+    private var aboutAccentColor: Color {
+        switch link.title {
+        case "Privacy":
+            return .mint
+        case "Support":
+            return .orange
+        default:
+            return .cyan
+        }
+    }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
+    }
+}
+
+private struct AboutUtilityPillButton: View {
+    let title: String
+    let systemImage: String
+    let isLightAppearance: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            AboutUtilityPillButtonLabel(
+                title: title,
+                systemImage: systemImage,
+                isLightAppearance: isLightAppearance
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AboutUtilityPillButtonLabel: View {
+    let title: String
+    let systemImage: String
+    let isLightAppearance: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+            Text(title)
+                .font(.system(size: 13, weight: .semibold, design: .default))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+        .frame(maxWidth: .infinity, minHeight: 36)
+        .padding(.horizontal, 10)
+        .background(
+            isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.11),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 }
 
@@ -1826,6 +3447,43 @@ private extension View {
                         selected
                             ? tintColor.opacity(isLightAppearance ? 0.54 : 0.44)
                             : (isLightAppearance ? Color.black.opacity(0.14) : Color.white.opacity(0.14)),
+                        lineWidth: 1
+                    )
+                }
+        }
+    }
+
+    @ViewBuilder
+    func modePickerApplyButtonBackground(
+        accentGradient: LinearGradient,
+        borderColor: Color,
+        isLightAppearance: Bool
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        if #available(iOS 26.0, macCatalyst 26.0, *) {
+            self
+                .background(accentGradient.opacity(isLightAppearance ? 0.30 : 0.24), in: shape)
+                .glassEffect(
+                    .regular
+                        .tint(borderColor.opacity(isLightAppearance ? 0.40 : 0.32))
+                        .interactive(),
+                    in: shape
+                )
+                .overlay {
+                    shape.stroke(
+                        borderColor.opacity(isLightAppearance ? 0.62 : 0.56),
+                        lineWidth: 1
+                    )
+                }
+        } else {
+            self
+                .background(
+                    accentGradient.opacity(isLightAppearance ? 0.26 : 0.22),
+                    in: shape
+                )
+                .overlay {
+                    shape.stroke(
+                        borderColor.opacity(isLightAppearance ? 0.58 : 0.54),
                         lineWidth: 1
                     )
                 }

@@ -19,6 +19,7 @@ public struct RendererHostView: View {
             renderCoordinator: renderCoordinator,
             surfaceState: surfaceState
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
         .ignoresSafeArea()
         .accessibilityIdentifier("performance-canvas")
@@ -36,11 +37,15 @@ private struct MetalRendererContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> MTKView {
         let view = MTKView(frame: .zero)
+        view.backgroundColor = .black
+        view.layer.backgroundColor = UIColor.black.cgColor
         context.coordinator.attach(view: view)
         return view
     }
 
     func updateUIView(_ uiView: MTKView, context: Context) {
+        uiView.backgroundColor = .black
+        uiView.layer.backgroundColor = UIColor.black.cgColor
         context.coordinator.update(surfaceState: surfaceState)
     }
 

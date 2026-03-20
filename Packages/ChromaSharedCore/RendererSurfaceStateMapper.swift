@@ -7,7 +7,8 @@ public struct RendererSurfaceStateMapper {
     public func map(
         session: ChromaSession,
         parameterStore: ParameterStore,
-        latestFeatureFrame: AudioFeatureFrame?
+        latestFeatureFrame: AudioFeatureFrame?,
+        performanceModeOverride: PerformanceMode? = nil
     ) -> RendererSurfaceState {
         let intensity = scalarValue(
             parameterID: "response.inputGain",
@@ -134,6 +135,19 @@ public struct RendererSurfaceStateMapper {
             parameterStore: parameterStore,
             fallback: 0.62
         )
+        let riemannNavigationModeRaw = scalarValue(
+            parameterID: "mode.riemannCorridor.navigationMode",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
+        let riemannNavigationMode = min(max(Double(Int(riemannNavigationModeRaw.rounded())), 0), 1)
+        let riemannSteeringStrength = scalarValue(
+            parameterID: "mode.riemannCorridor.steeringStrength",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.62
+        )
         let riemannPaletteRaw = scalarValue(
             parameterID: "mode.riemannCorridor.paletteVariant",
             scope: .mode(.riemannCorridor),
@@ -141,6 +155,8 @@ public struct RendererSurfaceStateMapper {
             fallback: 0
         )
         let riemannPaletteVariant = min(max(Double(Int(riemannPaletteRaw.rounded())), 0), 7)
+        let performanceModeIndex = self.performanceModeIndex(for: performanceModeOverride ?? session.performanceSettings.mode)
+        let silenceGateThreshold = session.audioCalibrationSettings.silenceGateThreshold
         let noImageInSilence = parameterStore.value(for: "output.noImageInSilence", scope: .global)?.toggleValue ?? false
 
         let scale: Double
@@ -222,7 +238,11 @@ public struct RendererSurfaceStateMapper {
                 riemannDetail: riemannDetail,
                 riemannFlowRate: riemannFlowRate,
                 riemannZeroBloom: riemannZeroBloom,
+                riemannNavigationMode: riemannNavigationMode,
+                riemannSteeringStrength: riemannSteeringStrength,
                 riemannPaletteVariant: riemannPaletteVariant,
+                performanceModeIndex: performanceModeIndex,
+                silenceGateThreshold: silenceGateThreshold,
                 featureAmplitude: featureAmplitude,
                 lowBandEnergy: featureLowBand,
                 midBandEnergy: featureMidBand,
@@ -294,6 +314,17 @@ public struct RendererSurfaceStateMapper {
             : (1 - normalizedMin + normalizedMax)
         let selectedWidth = outside ? (1 - insideWidth) : insideWidth
         return selectedWidth.clamped(to: 0 ... 1)
+    }
+
+    private func performanceModeIndex(for mode: PerformanceMode) -> Double {
+        switch mode {
+        case .auto:
+            return 0
+        case .highQuality:
+            return 1
+        case .safeFPS:
+            return 2
+        }
     }
 }
 

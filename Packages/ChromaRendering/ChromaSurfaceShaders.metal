@@ -1007,7 +1007,10 @@ fragment float4 renderer_tunnel_field_fragment(
     float3 base = mix(baseA, baseB, fog);
     float3 color = (base * (0.26 + (0.42 * fog))) + (prism * energy * 0.34);
     color += float3(0.0010, 0.0018, 0.0030) * (0.12 + (uniforms.featureAmplitude * 0.58));
-    return float4(color, max(energy, 0.0001));
+    if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) || !isfinite(energy)) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    return float4(clamp(color, float3(0.0), float3(6.0)), 1.0);
 }
 
 fragment float4 renderer_tunnel_shapes_fragment(
@@ -1038,7 +1041,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
         float perspective = 1.0 / (0.35 + depth);
         float2 projected = lane * perspective;
-        float size = scale * perspective * mix(0.50, 1.20, uniforms.tunnelShapeScale);
+        float size = scale * perspective * mix(0.95, 2.10, uniforms.tunnelShapeScale);
         float2 local = (point - projected) / max(size, 0.0001);
 
         float axisAngle = atan2(shape.axisDecaySustainRelease.y, shape.axisDecaySustainRelease.x);
@@ -1064,7 +1067,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
         float releaseDamp = mix(1.0, 0.20, releaseMix);
         float depthFade = smoothstep(9.0, 0.08, depth);
         float localEnergy = (edgeGlow + core + outline) * envelope * releaseDamp * depthFade;
-        localEnergy *= (1.25 + (uniforms.attackStrength * 0.95));
+        localEnergy *= (1.55 + (uniforms.attackStrength * 1.20));
 
         float hue = fract(shape.forwardHueVariantSeed.y + (shape.forwardHueVariantSeed.x * 0.03) + (local.x * 0.06));
         float3 shapeColor = spectralPalette(hue);
@@ -1075,7 +1078,10 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
     float3 field = tunnelField.sample(linearSampler, in.uv).rgb;
     color += field * 0.20;
-    return float4(color, max(energy, 0.0001));
+    if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) || !isfinite(energy)) {
+        return float4(clamp(field, float3(0.0), float3(4.0)), 1.0);
+    }
+    return float4(clamp(color, float3(0.0), float3(2.4)), 1.0);
 }
 
 fragment float4 renderer_tunnel_composite_fragment(
@@ -1128,7 +1134,10 @@ fragment float4 renderer_tunnel_composite_fragment(
 
     float vignette = smoothstep(1.62, 0.12, squareRadius);
     composed *= vignette;
-    return float4(composed, 1.0);
+    if (!isfinite(composed.x) || !isfinite(composed.y) || !isfinite(composed.z)) {
+        return float4(clamp(field, float3(0.0), float3(3.0)), 1.0);
+    }
+    return float4(clamp(composed, float3(0.0), float3(1.8)), 1.0);
 }
 
 fragment float4 renderer_fractal_field_fragment(

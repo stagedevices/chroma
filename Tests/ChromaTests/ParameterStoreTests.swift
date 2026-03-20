@@ -211,23 +211,31 @@ final class ParameterStoreTests: XCTestCase {
         let detail = store.descriptor(for: "mode.riemannCorridor.detail")
         let flowRate = store.descriptor(for: "mode.riemannCorridor.flowRate")
         let zeroBloom = store.descriptor(for: "mode.riemannCorridor.zeroBloom")
+        let navigationMode = store.descriptor(for: "mode.riemannCorridor.navigationMode")
+        let steeringStrength = store.descriptor(for: "mode.riemannCorridor.steeringStrength")
         let palette = store.descriptor(for: "mode.riemannCorridor.paletteVariant")
 
         XCTAssertNotNil(detail)
         XCTAssertNotNil(flowRate)
         XCTAssertNotNil(zeroBloom)
+        XCTAssertNotNil(navigationMode)
+        XCTAssertNotNil(steeringStrength)
         XCTAssertNotNil(palette)
-        guard let detail, let flowRate, let zeroBloom, let palette else {
+        guard let detail, let flowRate, let zeroBloom, let navigationMode, let steeringStrength, let palette else {
             return XCTFail("Expected riemann corridor parameter descriptors")
         }
 
         XCTAssertEqual(detail.scope, .mode(.riemannCorridor))
         XCTAssertEqual(flowRate.scope, .mode(.riemannCorridor))
         XCTAssertEqual(zeroBloom.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(navigationMode.scope, .mode(.riemannCorridor))
+        XCTAssertEqual(steeringStrength.scope, .mode(.riemannCorridor))
         XCTAssertEqual(palette.scope, .mode(.riemannCorridor))
         XCTAssertEqual(detail.defaultValue.scalarValue ?? -1, 0.60, accuracy: 0.0001)
         XCTAssertEqual(flowRate.defaultValue.scalarValue ?? -1, 0.56, accuracy: 0.0001)
         XCTAssertEqual(zeroBloom.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(navigationMode.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(steeringStrength.defaultValue.scalarValue ?? -1, 0.62, accuracy: 0.0001)
         XCTAssertEqual(palette.defaultValue.scalarValue ?? -1, 0.0, accuracy: 0.0001)
         XCTAssertEqual(detail.minimumValue ?? -1, 0, accuracy: 0.0001)
         XCTAssertEqual(detail.maximumValue ?? -1, 1, accuracy: 0.0001)
@@ -235,6 +243,10 @@ final class ParameterStoreTests: XCTestCase {
         XCTAssertEqual(flowRate.maximumValue ?? -1, 1, accuracy: 0.0001)
         XCTAssertEqual(zeroBloom.minimumValue ?? -1, 0, accuracy: 0.0001)
         XCTAssertEqual(zeroBloom.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(navigationMode.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(navigationMode.maximumValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(steeringStrength.minimumValue ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(steeringStrength.maximumValue ?? -1, 1, accuracy: 0.0001)
         XCTAssertEqual(palette.minimumValue ?? -1, 0, accuracy: 0.0001)
         XCTAssertEqual(palette.maximumValue ?? -1, 7, accuracy: 0.0001)
     }

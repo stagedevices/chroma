@@ -35,9 +35,9 @@ public func appSheetPresentationStyle(for destination: AppSheetDestination) -> A
 
 public func appSheetDetentStyle(for destination: AppSheetDestination) -> AppSheetDetentStyle {
     switch destination {
-    case .modePicker, .presetBrowser, .settingsDiagnostics:
+    case .settingsDiagnostics:
         return .mediumAndLarge
-    case .feedbackSetup, .recorderExport, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
+    case .modePicker, .presetBrowser, .feedbackSetup, .recorderExport, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
         return .mediumOnly
     }
 }

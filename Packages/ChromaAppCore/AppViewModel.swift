@@ -2,76 +2,116 @@ import Foundation
 import SwiftUI
 import Combine
 
+public enum PerformanceChromeState: Equatable {
+    case controlsVisible
+    case controlsHiddenShowButtonVisible
+    case controlsHiddenShowButtonHidden
+}
+
 @MainActor
 public final class AppViewModel: ObservableObject {
     public let router: AppRouter
 
     @Published public var isPerformanceModeEnabled: Bool
-    @Published public private(set) var isChromeVisible: Bool
-    @Published public private(set) var isRevealControlVisible: Bool
+    @Published public private(set) var performanceChromeState: PerformanceChromeState
 
-    private var performanceHideTask: Task<Void, Never>?
-    private let chromeHideDelayNanoseconds: UInt64 = 4_000_000_000
-    private let revealControlHideDelayNanoseconds: UInt64 = 3_000_000_000
+    public var isChromeVisible: Bool {
+        !isPerformanceModeEnabled || performanceChromeState == .controlsVisible
+    }
 
-    public init(router: AppRouter, isPerformanceModeEnabled: Bool = false) {
+    public var isRevealControlVisible: Bool {
+        isPerformanceModeEnabled && performanceChromeState == .controlsHiddenShowButtonVisible
+    }
+
+    private var chromeAutoHideTask: Task<Void, Never>?
+    private var showControlsAutoHideTask: Task<Void, Never>?
+    private var showControlsRevealTask: Task<Void, Never>?
+    private let chromeHideDelayNanoseconds: UInt64
+    private let showControlsHideDelayNanoseconds: UInt64
+    private let showControlsRevealDelayNanoseconds: UInt64
+
+    public init(
+        router: AppRouter,
+        isPerformanceModeEnabled: Bool = false,
+        chromeHideDelayNanoseconds: UInt64 = 3_500_000_000,
+        showControlsHideDelayNanoseconds: UInt64 = 1_800_000_000,
+        showControlsRevealDelayNanoseconds: UInt64 = 80_000_000
+    ) {
         self.router = router
         self.isPerformanceModeEnabled = isPerformanceModeEnabled
-        self.isChromeVisible = true
-        self.isRevealControlVisible = false
+        self.performanceChromeState = .controlsVisible
+        self.chromeHideDelayNanoseconds = chromeHideDelayNanoseconds
+        self.showControlsHideDelayNanoseconds = showControlsHideDelayNanoseconds
+        self.showControlsRevealDelayNanoseconds = showControlsRevealDelayNanoseconds
     }
 
     public func togglePerformanceMode() {
         if isPerformanceModeEnabled {
-            cancelScheduledHide()
-            isPerformanceModeEnabled = false
-            withAnimation(.easeInOut(duration: 0.22)) {
-                isChromeVisible = true
-                isRevealControlVisible = false
-            }
+            exitPerformanceMode()
         } else {
+            enterPerformanceMode()
+        }
+    }
+
+    public func enterPerformanceMode() {
+        guard !isPerformanceModeEnabled else { return }
+        cancelPendingPerformanceTasks()
+        withAnimation(.easeInOut(duration: 0.22)) {
             isPerformanceModeEnabled = true
-            hidePerformanceChrome()
+            performanceChromeState = .controlsHiddenShowButtonHidden
+        }
+        scheduleShowControlsRevealThenHide()
+    }
+
+    public func exitPerformanceMode() {
+        guard isPerformanceModeEnabled else { return }
+        cancelPendingPerformanceTasks()
+        withAnimation(.easeInOut(duration: 0.22)) {
+            isPerformanceModeEnabled = false
+            performanceChromeState = .controlsVisible
         }
     }
 
     public func hidePerformanceChrome() {
         guard isPerformanceModeEnabled else { return }
-        cancelScheduledHide()
-        withAnimation(.easeInOut(duration: 0.22)) {
-            isChromeVisible = false
-            isRevealControlVisible = true
+        cancelPendingPerformanceTasks()
+        withAnimation(.easeInOut(duration: 0.20)) {
+            performanceChromeState = .controlsHiddenShowButtonVisible
         }
-        scheduleRevealControlHide()
+        scheduleShowControlsAutoHide()
     }
 
     public func revealPerformanceChrome() {
         guard isPerformanceModeEnabled else {
             withAnimation(.easeInOut(duration: 0.22)) {
-                isChromeVisible = true
-                isRevealControlVisible = false
+                performanceChromeState = .controlsVisible
             }
             return
         }
 
-        cancelScheduledHide()
-        withAnimation(.easeInOut(duration: 0.22)) {
-            isChromeVisible = true
-            isRevealControlVisible = false
+        cancelPendingPerformanceTasks()
+        if performanceChromeState == .controlsHiddenShowButtonVisible {
+            withAnimation(.easeOut(duration: 0.14)) {
+                performanceChromeState = .controlsHiddenShowButtonHidden
+            }
         }
-        scheduleChromeHide()
+
+        withAnimation(.easeInOut(duration: 0.22)) {
+            performanceChromeState = .controlsVisible
+        }
+        scheduleChromeAutoHide()
     }
 
     public func handleCanvasTap() {
         guard isPerformanceModeEnabled else { return }
-        if isChromeVisible {
+
+        switch performanceChromeState {
+        case .controlsVisible:
             scheduleChromeHide()
-        } else {
-            cancelScheduledHide()
-            withAnimation(.easeInOut(duration: 0.22)) {
-                isRevealControlVisible = true
-            }
-            scheduleRevealControlHide()
+        case .controlsHiddenShowButtonVisible:
+            scheduleShowControlsAutoHide()
+        case .controlsHiddenShowButtonHidden:
+            showRevealControlTemporarily()
         }
     }
 
@@ -120,30 +160,65 @@ public final class AppViewModel: ObservableObject {
         router.present(.riemannPalettePicker)
     }
 
+    private func showRevealControlTemporarily() {
+        guard isPerformanceModeEnabled else { return }
+        cancelPendingPerformanceTasks()
+        withAnimation(.easeOut(duration: 0.18)) {
+            performanceChromeState = .controlsHiddenShowButtonVisible
+        }
+        scheduleShowControlsAutoHide()
+    }
+
     private func scheduleChromeHide() {
-        cancelScheduledHide()
+        scheduleChromeAutoHide()
+    }
+
+    private func scheduleChromeAutoHide() {
+        chromeAutoHideTask?.cancel()
         let delay = chromeHideDelayNanoseconds
-        performanceHideTask = Task { [weak self] in
+        chromeAutoHideTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
             guard let self, !Task.isCancelled, self.isPerformanceModeEnabled else { return }
             self.hidePerformanceChrome()
         }
     }
 
-    private func scheduleRevealControlHide() {
-        cancelScheduledHide()
-        let delay = revealControlHideDelayNanoseconds
-        performanceHideTask = Task { [weak self] in
+    private func scheduleShowControlsAutoHide() {
+        showControlsAutoHideTask?.cancel()
+        let delay = showControlsHideDelayNanoseconds
+        showControlsAutoHideTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
-            guard let self, !Task.isCancelled, self.isPerformanceModeEnabled, !self.isChromeVisible else { return }
-            withAnimation(.easeInOut(duration: 0.22)) {
-                self.isRevealControlVisible = false
+            guard
+                let self,
+                !Task.isCancelled,
+                self.isPerformanceModeEnabled,
+                self.performanceChromeState == .controlsHiddenShowButtonVisible
+            else { return }
+            withAnimation(.easeOut(duration: 0.14)) {
+                self.performanceChromeState = .controlsHiddenShowButtonHidden
             }
         }
     }
 
-    private func cancelScheduledHide() {
-        performanceHideTask?.cancel()
-        performanceHideTask = nil
+    private func scheduleShowControlsRevealThenHide() {
+        showControlsRevealTask?.cancel()
+        let delay = showControlsRevealDelayNanoseconds
+        showControlsRevealTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, !Task.isCancelled, self.isPerformanceModeEnabled else { return }
+            withAnimation(.easeOut(duration: 0.22)) {
+                self.performanceChromeState = .controlsHiddenShowButtonVisible
+            }
+            self.scheduleShowControlsAutoHide()
+        }
+    }
+
+    private func cancelPendingPerformanceTasks() {
+        chromeAutoHideTask?.cancel()
+        chromeAutoHideTask = nil
+        showControlsAutoHideTask?.cancel()
+        showControlsAutoHideTask = nil
+        showControlsRevealTask?.cancel()
+        showControlsRevealTask = nil
     }
 }

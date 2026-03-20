@@ -264,6 +264,30 @@ public enum ParameterCatalog {
             maximumValue: 1.0
         ),
         ParameterDescriptor(
+            id: "mode.riemannCorridor.navigationMode",
+            title: "Navigation Mode",
+            summary: "Guided zoom handoff vs free-flight steering.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.steeringStrength",
+            title: "Steering Strength",
+            summary: "Anti-jitter steering damping and heading stability.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.62),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
             id: "mode.riemannCorridor.paletteVariant",
             title: "Palette",
             summary: "Curated gradient bank selection for Mandelbrot domain coloring.",

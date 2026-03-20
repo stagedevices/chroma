@@ -19,8 +19,8 @@ final class AppStateTests: XCTestCase {
     }
 
     func testSheetDetentPolicyMatchesDestinationContract() {
-        XCTAssertEqual(appSheetDetentStyle(for: .modePicker), .mediumAndLarge)
-        XCTAssertEqual(appSheetDetentStyle(for: .presetBrowser), .mediumAndLarge)
+        XCTAssertEqual(appSheetDetentStyle(for: .modePicker), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .presetBrowser), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .settingsDiagnostics), .mediumAndLarge)
         XCTAssertEqual(appSheetDetentStyle(for: .feedbackSetup), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .recorderExport), .mediumOnly)
@@ -48,12 +48,30 @@ final class AppStateTests: XCTestCase {
         appViewModel.togglePerformanceMode()
         XCTAssertTrue(appViewModel.isPerformanceModeEnabled)
         XCTAssertFalse(appViewModel.isChromeVisible)
-        XCTAssertTrue(appViewModel.isRevealControlVisible)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonHidden)
+        XCTAssertFalse(appViewModel.isRevealControlVisible)
 
         appViewModel.togglePerformanceMode()
         XCTAssertFalse(appViewModel.isPerformanceModeEnabled)
         XCTAssertTrue(appViewModel.isChromeVisible)
         XCTAssertFalse(appViewModel.isRevealControlVisible)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsVisible)
+    }
+
+    func testExitPerformanceModeIsOneWayAndCannotReenterFullscreen() {
+        let appViewModel = AppViewModel(router: AppRouter())
+
+        // No-op when already not in fullscreen.
+        appViewModel.exitPerformanceMode()
+        XCTAssertFalse(appViewModel.isPerformanceModeEnabled)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsVisible)
+
+        // Exits cleanly when in fullscreen.
+        appViewModel.enterPerformanceMode()
+        XCTAssertTrue(appViewModel.isPerformanceModeEnabled)
+        appViewModel.exitPerformanceMode()
+        XCTAssertFalse(appViewModel.isPerformanceModeEnabled)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsVisible)
     }
 
     func testPerformanceModeChromeCanHideAndReveal() {
@@ -67,6 +85,64 @@ final class AppStateTests: XCTestCase {
         appViewModel.revealPerformanceChrome()
         XCTAssertTrue(appViewModel.isChromeVisible)
         XCTAssertFalse(appViewModel.isRevealControlVisible)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsVisible)
+    }
+
+    func testPerformanceModeRevealButtonAutoHidesFully() async {
+        let appViewModel = AppViewModel(
+            router: AppRouter(),
+            chromeHideDelayNanoseconds: 120_000_000,
+            showControlsHideDelayNanoseconds: 60_000_000,
+            showControlsRevealDelayNanoseconds: 10_000_000
+        )
+
+        appViewModel.togglePerformanceMode()
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonHidden)
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonVisible)
+
+        try? await Task.sleep(nanoseconds: 90_000_000)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonHidden)
+        XCTAssertFalse(appViewModel.isRevealControlVisible)
+    }
+
+    func testCanvasTapHiddenStateShowsRevealAndSecondTapKeepsFullscreenHiddenChrome() async {
+        let appViewModel = AppViewModel(
+            router: AppRouter(),
+            chromeHideDelayNanoseconds: 500_000_000,
+            showControlsHideDelayNanoseconds: 80_000_000,
+            showControlsRevealDelayNanoseconds: 10_000_000
+        )
+
+        appViewModel.togglePerformanceMode()
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonHidden)
+
+        appViewModel.handleCanvasTap()
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonVisible)
+        XCTAssertTrue(appViewModel.isRevealControlVisible)
+
+        appViewModel.handleCanvasTap()
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonVisible)
+        XCTAssertFalse(appViewModel.isChromeVisible)
+    }
+
+    func testRegisterPerformanceInteractionKeepsChromeVisibleUntilAutoHide() async {
+        let appViewModel = AppViewModel(
+            router: AppRouter(),
+            chromeHideDelayNanoseconds: 80_000_000,
+            showControlsHideDelayNanoseconds: 50_000_000,
+            showControlsRevealDelayNanoseconds: 10_000_000
+        )
+
+        appViewModel.togglePerformanceMode()
+        appViewModel.registerPerformanceInteraction()
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsVisible)
+        XCTAssertTrue(appViewModel.isChromeVisible)
+
+        try? await Task.sleep(nanoseconds: 110_000_000)
+        XCTAssertEqual(appViewModel.performanceChromeState, .controlsHiddenShowButtonVisible)
     }
 
     func testAppViewModelPresentsModeStylePickers() {
@@ -393,5 +469,196 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(sessionViewModel.isColorFeedbackRunning)
         XCTAssertEqual(sessionViewModel.cameraFeedbackAuthorizationStatus, .denied)
         XCTAssertNotNil(sessionViewModel.cameraFeedbackStatusMessage)
+    }
+
+    func testPerformanceAndCalibrationSettingsUpdateEngineState() async {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+        guard let analysis = sessionViewModel.audioAnalysisService as? PlaceholderAudioAnalysisService else {
+            return XCTFail("Expected PlaceholderAudioAnalysisService")
+        }
+
+        sessionViewModel.setPerformanceMode(.safeFPS)
+        XCTAssertEqual(sessionViewModel.session.performanceSettings.mode, .safeFPS)
+        XCTAssertEqual(sessionViewModel.rendererSurfaceState.controls.performanceModeIndex, 2.0, accuracy: 0.0001)
+
+        sessionViewModel.adjustAttackThreshold(by: 1.5)
+        sessionViewModel.adjustSilenceGateThreshold(by: 0.015)
+        XCTAssertEqual(analysis.currentTuning.attackThresholdDB, 9.5, accuracy: 0.0001)
+        XCTAssertEqual(analysis.currentTuning.silenceGateThreshold, 0.045, accuracy: 0.0001)
+
+        await sessionViewModel.calibrateRoomNoise()
+        XCTAssertEqual(sessionViewModel.session.audioCalibrationSettings.attackThresholdDB, 8.0, accuracy: 0.0001)
+        XCTAssertEqual(sessionViewModel.session.audioCalibrationSettings.silenceGateThreshold, 0.03, accuracy: 0.0001)
+    }
+
+    func testRiemannNavigationControlsWriteModeScopedValues() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.riemannCorridor)
+        XCTAssertFalse(sessionViewModel.riemannNavigationIsFreeFlight)
+        XCTAssertEqual(sessionViewModel.riemannSteeringStrength, 0.62, accuracy: 0.0001)
+
+        sessionViewModel.setRiemannNavigationMode(freeFlight: true)
+        sessionViewModel.setRiemannSteeringStrength(0.84)
+
+        XCTAssertTrue(sessionViewModel.riemannNavigationIsFreeFlight)
+        XCTAssertEqual(sessionViewModel.riemannSteeringStrength, 0.84, accuracy: 0.0001)
+    }
+
+    func testModeDefaultsSaveApplyAndResetForCurrentMode() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        let inputGain = sessionViewModel.parameterStore.descriptor(for: "response.inputGain")!
+        let hueResponse = sessionViewModel.parameterStore.descriptor(for: "mode.colorShift.hueResponse")!
+
+        sessionViewModel.updateParameter(inputGain, value: .scalar(0.95))
+        sessionViewModel.updateParameter(hueResponse, value: .scalar(0.21))
+        sessionViewModel.setCurrentModeAsDefault()
+
+        sessionViewModel.updateParameter(inputGain, value: .scalar(1.21))
+        sessionViewModel.updateParameter(hueResponse, value: .scalar(0.82))
+
+        sessionViewModel.selectMode(.prismField)
+        sessionViewModel.selectMode(.colorShift)
+
+        XCTAssertEqual(
+            sessionViewModel.parameterStore.value(for: "response.inputGain", scope: .global)?.scalarValue ?? -1,
+            0.95,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            sessionViewModel.parameterStore.value(for: "mode.colorShift.hueResponse", scope: .mode(.colorShift))?.scalarValue ?? -1,
+            0.21,
+            accuracy: 0.0001
+        )
+
+        sessionViewModel.resetCurrentModeDefaults()
+        XCTAssertEqual(
+            sessionViewModel.parameterStore.value(for: "response.inputGain", scope: .global)?.scalarValue ?? -1,
+            0.72,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            sessionViewModel.parameterStore.value(for: "mode.colorShift.hueResponse", scope: .mode(.colorShift))?.scalarValue ?? -1,
+            0.66,
+            accuracy: 0.0001
+        )
+    }
+
+    func testSessionRecoveryAutosaveAndPanicReset() async {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+        guard let recovery = sessionViewModel.sessionRecoveryService as? PlaceholderSessionRecoveryService else {
+            return XCTFail("Expected PlaceholderSessionRecoveryService")
+        }
+
+        XCTAssertNil(recovery.loadSnapshot())
+        let gainDescriptor = sessionViewModel.parameterStore.descriptor(for: "response.inputGain")!
+        sessionViewModel.updateParameter(gainDescriptor, value: .scalar(1.07))
+
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        let saved = recovery.loadSnapshot()
+        XCTAssertNotNil(saved)
+        XCTAssertTrue(
+            saved?.parameterAssignments.contains(where: {
+                $0.parameterID == "response.inputGain" && $0.scope == .global
+            }) ?? false
+        )
+
+        await sessionViewModel.resetToCleanState()
+        XCTAssertNil(recovery.loadSnapshot())
+        XCTAssertEqual(sessionViewModel.session.activeModeID, .colorShift)
+    }
+
+    func testModePickerHeroPresentationMetadataCoversAllModes() {
+        let presentationMap = modePickerHeroPresentationMap()
+        XCTAssertEqual(Set(presentationMap.keys), Set(VisualModeID.allCases))
+
+        for modeID in VisualModeID.allCases {
+            let presentation = modePickerHeroPresentation(for: modeID)
+            XCTAssertFalse(presentation.systemImage.isEmpty)
+            XCTAssertFalse(presentation.tagline.isEmpty)
+            XCTAssertFalse(presentation.behaviorTags.isEmpty)
+        }
+    }
+
+    func testModePickerDraftStateStartsAtActiveMode() {
+        let state = ModePickerDraftState(activeModeID: .fractalCaustics)
+        XCTAssertEqual(state.initialModeID, .fractalCaustics)
+        XCTAssertEqual(state.activeModeAfterDismissWithoutApply(), .fractalCaustics)
+        XCTAssertEqual(state.activeModeAfterApply(), .fractalCaustics)
+    }
+
+    func testModePickerDraftStatePreviewDoesNotCommitWithoutApply() {
+        var state = ModePickerDraftState(activeModeID: .colorShift)
+        state.preview(.tunnelCels)
+        XCTAssertEqual(state.activeModeAfterDismissWithoutApply(), .colorShift)
+        XCTAssertEqual(state.activeModeAfterApply(), .tunnelCels)
+    }
+
+    func testPresetPickerDraftStateStartsAtActivePresetWhenAvailable() {
+        let first = Preset(name: "First", modeID: .colorShift, values: [])
+        let second = Preset(name: "Second", modeID: .colorShift, values: [])
+        let state = PresetPickerDraftState(activePresetID: second.id, presets: [first, second])
+        XCTAssertEqual(state.initialPresetID, second.id)
+        XCTAssertEqual(state.activePresetAfterDismissWithoutApply(), second.id)
+        XCTAssertEqual(state.activePresetAfterApply(), second.id)
+    }
+
+    func testPresetPickerDraftStateFallsBackToFirstWhenActiveMissing() {
+        let first = Preset(name: "First", modeID: .colorShift, values: [])
+        let second = Preset(name: "Second", modeID: .colorShift, values: [])
+        var state = PresetPickerDraftState(activePresetID: UUID(), presets: [first, second])
+
+        XCTAssertEqual(state.activePresetAfterApply(), first.id)
+
+        state.preview(second.id)
+        XCTAssertEqual(state.activePresetAfterDismissWithoutApply(), state.initialPresetID)
+        XCTAssertEqual(state.activePresetAfterApply(), second.id)
+    }
+
+    func testPalettePickerPresentationCatalogContainsEightDistinctEntries() {
+        let catalog = chromaPalettePickerPresentationCatalog()
+        XCTAssertEqual(catalog.count, 8)
+        XCTAssertEqual(Set(catalog.map(\.index)).count, 8)
+        XCTAssertTrue(catalog.allSatisfy { !$0.name.isEmpty && !$0.systemImage.isEmpty && $0.swatchHues.count == 4 })
+    }
+
+    func testTunnelVariantPickerPresentationCatalogContainsThreeEntries() {
+        let catalog = tunnelVariantPickerPresentationCatalog()
+        XCTAssertEqual(catalog.map(\.index), [0, 1, 2])
+        XCTAssertTrue(catalog.allSatisfy { !$0.title.isEmpty && !$0.summary.isEmpty && !$0.systemImage.isEmpty })
+    }
+
+    func testAboutLinkCatalogContainsExpectedHTTPSLinks() {
+        let links = chromaAboutLinkCatalog()
+        XCTAssertEqual(links.count, 3)
+        XCTAssertEqual(
+            links.map(\.urlString),
+            [
+                "https://stagedevices.github.io/chroma",
+                "https://stagedevices.github.io/chroma/privacy",
+                "https://stagedevices.github.io/chroma/support",
+            ]
+        )
+        XCTAssertTrue(links.allSatisfy { $0.urlString.hasPrefix("https://") })
+    }
+
+    func testAboutVersionStringFormatterUsesStableFallbacks() {
+        XCTAssertEqual(chromaAboutVersionString(infoDictionary: nil), "Version unavailable")
+        XCTAssertEqual(chromaAboutVersionString(infoDictionary: ["CFBundleShortVersionString": "2.1.0"]), "2.1.0")
+        XCTAssertEqual(chromaAboutVersionString(infoDictionary: ["CFBundleVersion": "84"]), "Build 84")
+        XCTAssertEqual(
+            chromaAboutVersionString(
+                infoDictionary: [
+                    "CFBundleShortVersionString": "2.1.0",
+                    "CFBundleVersion": "84",
+                ]
+            ),
+            "2.1.0 (84)"
+        )
     }
 }

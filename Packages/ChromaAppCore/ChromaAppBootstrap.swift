@@ -52,7 +52,14 @@ public struct ChromaAppBootstrap {
     ) -> ChromaAppBootstrap {
         let router = AppRouter()
         let parameterStore = ParameterStore(descriptors: ParameterCatalog.descriptors)
-        let inputCalibrationService = PlaceholderInputCalibrationService()
+        let inputCalibrationService: InputCalibrationService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderInputCalibrationService()
+            }
+#endif
+            return LiveInputCalibrationService(meterPublisher: audioInputService.meterPublisher)
+        }()
         let renderCoordinator = DefaultRenderCoordinator()
         let presetService: PresetService = {
             let seededPresets = Self.modeStarterSeedPresets
@@ -62,6 +69,22 @@ public struct ChromaAppBootstrap {
             }
 #endif
             return DiskPresetService(seedPresets: seededPresets)
+        }()
+        let modeDefaultsService: ModeDefaultsService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderModeDefaultsService()
+            }
+#endif
+            return DiskModeDefaultsService()
+        }()
+        let sessionRecoveryService: SessionRecoveryService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderSessionRecoveryService()
+            }
+#endif
+            return DiskSessionRecoveryService()
         }()
         let recorderService: RecorderService = {
 #if DEBUG
@@ -82,8 +105,15 @@ public struct ChromaAppBootstrap {
         let setlistService = PlaceholderSetlistService()
         let presets = presetService.loadPresets()
         let performanceSets = setlistService.loadSets()
+        let recoveredSnapshot = sessionRecoveryService.loadSnapshot()
+        let recoveredSession = recoveredSnapshot?.session
+        let shouldRestore = recoveredSession?.sessionRecoverySettings.restoreOnLaunchEnabled ?? false
+        let initialSession = shouldRestore ? (recoveredSession ?? ChromaSession.initial()) : ChromaSession.initial()
+        if shouldRestore, let assignments = recoveredSnapshot?.parameterAssignments {
+            parameterStore.load(assignments)
+        }
         let sessionViewModel = SessionViewModel(
-            session: ChromaSession.initial(),
+            session: initialSession,
             parameterStore: parameterStore,
             audioInputService: audioInputService,
             inputCalibrationService: inputCalibrationService,
@@ -92,6 +122,8 @@ public struct ChromaAppBootstrap {
             rendererService: rendererService,
             renderCoordinator: renderCoordinator,
             presetService: presetService,
+            modeDefaultsService: modeDefaultsService,
+            sessionRecoveryService: sessionRecoveryService,
             recorderService: recorderService,
             diagnosticsService: diagnosticsService,
             externalDisplayCoordinator: externalDisplayCoordinator,

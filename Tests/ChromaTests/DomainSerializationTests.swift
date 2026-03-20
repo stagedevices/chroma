@@ -63,4 +63,41 @@ final class DomainSerializationTests: XCTestCase {
         XCTAssertEqual(decoded.exportCaptureSettings.codec, .proRes422)
         XCTAssertEqual(decoded.outputState.glassAppearanceStyle, .dark)
     }
+
+    func testLegacySessionWithoutNewSettingsDecodesWithSafeDefaults() throws {
+        let legacyJSON = """
+        {
+          "activeModeID": "colorShift",
+          "activePresetName": "Unsaved Session",
+          "morphState": {
+            "progress": 0
+          },
+          "outputState": {
+            "selectedDisplayTargetID": "device",
+            "isMirrorEnabled": false,
+            "hidesOperatorChrome": false,
+            "noImageInSilence": false,
+            "blackFloor": 0.86,
+            "isColorFeedbackEnabled": false
+          },
+          "availableDisplayTargets": [
+            {
+              "id": "device",
+              "name": "Device Screen",
+              "kind": "deviceScreen",
+              "isAvailable": true,
+              "supportsFullscreen": true
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(ChromaSession.self, from: legacyJSON)
+        XCTAssertEqual(decoded.performanceSettings.mode, .auto)
+        XCTAssertTrue(decoded.performanceSettings.thermalAwareFallbackEnabled)
+        XCTAssertEqual(decoded.audioCalibrationSettings.attackThresholdDB, 8, accuracy: 0.0001)
+        XCTAssertEqual(decoded.audioCalibrationSettings.silenceGateThreshold, 0.03, accuracy: 0.0001)
+        XCTAssertTrue(decoded.sessionRecoverySettings.autoSaveEnabled)
+        XCTAssertTrue(decoded.sessionRecoverySettings.restoreOnLaunchEnabled)
+    }
 }

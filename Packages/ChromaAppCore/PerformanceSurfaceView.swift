@@ -13,7 +13,10 @@ public struct PerformanceSurfaceView: View {
             renderCoordinator: sessionViewModel.renderCoordinator,
             surfaceState: sessionViewModel.rendererSurfaceState
         )
-        .background(sessionViewModel.isLightGlassAppearance ? Color.white : Color.black)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Keep a stable dark fallback behind Metal so theme transitions never wash out
+        // the performance surface if frame submission stalls.
+        .background(Color.black)
         .onAppear {
             sessionViewModel.refreshDiagnostics()
         }

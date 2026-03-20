@@ -195,11 +195,15 @@ final class AudioPipelineCoreTests: XCTestCase {
         store.setValue(.scalar(0.69), for: "mode.riemannCorridor.detail", scope: .mode(.riemannCorridor))
         store.setValue(.scalar(0.42), for: "mode.riemannCorridor.flowRate", scope: .mode(.riemannCorridor))
         store.setValue(.scalar(0.77), for: "mode.riemannCorridor.zeroBloom", scope: .mode(.riemannCorridor))
+        store.setValue(.scalar(1.0), for: "mode.riemannCorridor.navigationMode", scope: .mode(.riemannCorridor))
+        store.setValue(.scalar(0.88), for: "mode.riemannCorridor.steeringStrength", scope: .mode(.riemannCorridor))
         store.setValue(.scalar(5.7), for: "mode.riemannCorridor.paletteVariant", scope: .mode(.riemannCorridor))
 
         let mapper = RendererSurfaceStateMapper()
         var session = ChromaSession.initial()
         session.activeModeID = .riemannCorridor
+        session.performanceSettings.mode = .highQuality
+        session.audioCalibrationSettings.silenceGateThreshold = 0.081
 
         let featureFrame = AudioFeatureFrame(
             timestamp: .now,
@@ -223,11 +227,37 @@ final class AudioPipelineCoreTests: XCTestCase {
         XCTAssertEqual(mapped.controls.riemannDetail, 0.69, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.riemannFlowRate, 0.42, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.riemannZeroBloom, 0.77, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.riemannNavigationMode, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.riemannSteeringStrength, 0.88, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.riemannPaletteVariant, 6.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.performanceModeIndex, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(mapped.controls.silenceGateThreshold, 0.081, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.scale, 0.69, accuracy: 0.0001)
         XCTAssertGreaterThan(mapped.controls.motion, 0.42)
         XCTAssertEqual(mapped.controls.pitchConfidence, 0.79, accuracy: 0.0001)
         XCTAssertEqual(mapped.controls.stablePitchClass, 2)
+    }
+
+    func testRendererSurfaceStateMapperRespectsPerformanceOverride() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        let mapper = RendererSurfaceStateMapper()
+        var session = ChromaSession.initial()
+        session.performanceSettings.mode = .highQuality
+
+        let defaultMapped = mapper.map(
+            session: session,
+            parameterStore: store,
+            latestFeatureFrame: nil
+        )
+        let overriddenMapped = mapper.map(
+            session: session,
+            parameterStore: store,
+            latestFeatureFrame: nil,
+            performanceModeOverride: .safeFPS
+        )
+
+        XCTAssertEqual(defaultMapped.controls.performanceModeIndex, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(overriddenMapped.controls.performanceModeIndex, 2.0, accuracy: 0.0001)
     }
 
     func testAudioStatusFormatterProducesLiveSummary() {
@@ -354,6 +384,37 @@ final class AudioPipelineCoreTests: XCTestCase {
         XCTAssertEqual(analysisService.latestFrame.attackID, firstAttackID + 1)
 
         analysisService.stopAnalysis()
+    }
+
+    func testLiveInputCalibrationServiceDeterministicallyMapsAmbientFrames() async throws {
+        let subject = PassthroughSubject<AudioMeterFrame, Never>()
+        let calibrationService = LiveInputCalibrationService(
+            meterPublisher: subject.eraseToAnyPublisher(),
+            calibrationWindowSeconds: 0.8
+        )
+
+        let task = Task { try await calibrationService.beginCalibration() }
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let baseTime = Date(timeIntervalSince1970: 20_000)
+        let frames: [AudioMeterFrame] = [
+            AudioMeterFrame(timestamp: baseTime, rms: 0.010, peak: 0.020, rmsDBFS: -62, peakDBFS: -56),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.10), rms: 0.012, peak: 0.023, rmsDBFS: -60, peakDBFS: -54),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.20), rms: 0.015, peak: 0.026, rmsDBFS: -58, peakDBFS: -52),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.30), rms: 0.018, peak: 0.030, rmsDBFS: -56, peakDBFS: -50),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.40), rms: 0.022, peak: 0.034, rmsDBFS: -54, peakDBFS: -48),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.50), rms: 0.026, peak: 0.040, rmsDBFS: -52, peakDBFS: -46),
+            AudioMeterFrame(timestamp: baseTime.addingTimeInterval(0.60), rms: 0.030, peak: 0.045, rmsDBFS: -50, peakDBFS: -44),
+        ]
+        for frame in frames {
+            subject.send(frame)
+        }
+
+        let result = try await task.value
+        XCTAssertEqual(result.measuredNoiseFloorDBFS, -53.36, accuracy: 0.2)
+        XCTAssertEqual(result.measuredAmbientEnergy, 0.02568, accuracy: 0.001)
+        XCTAssertEqual(result.attackThresholdDB, 9.935, accuracy: 0.2)
+        XCTAssertEqual(result.silenceGateThreshold, 0.0393, accuracy: 0.003)
     }
 
     func testLiveAudioAnalysisUsesDBFSMeterWhenAvailable() async throws {

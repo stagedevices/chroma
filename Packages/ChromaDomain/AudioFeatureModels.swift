@@ -5,17 +5,20 @@ public struct AudioAnalysisTuning: Codable, Equatable, Sendable {
     public var attackHysteresisDB: Double
     public var attackCooldownMS: Double
     public var inputGainDB: Double
+    public var silenceGateThreshold: Double
 
     public init(
         attackThresholdDB: Double = 8,
         attackHysteresisDB: Double = 2,
         attackCooldownMS: Double = 70,
-        inputGainDB: Double = 0
+        inputGainDB: Double = 0,
+        silenceGateThreshold: Double = 0.03
     ) {
         self.attackThresholdDB = attackThresholdDB
         self.attackHysteresisDB = attackHysteresisDB
         self.attackCooldownMS = attackCooldownMS
         self.inputGainDB = inputGainDB
+        self.silenceGateThreshold = silenceGateThreshold
     }
 
     public static let `default` = AudioAnalysisTuning()
@@ -29,7 +32,8 @@ public struct AudioAnalysisTuning: Codable, Equatable, Sendable {
             attackThresholdDB: attackThresholdDB.clamped(to: 2 ... 24),
             attackHysteresisDB: attackHysteresisDB.clamped(to: 0.5 ... 8),
             attackCooldownMS: attackCooldownMS.clamped(to: 20 ... 500),
-            inputGainDB: inputGainDB.clamped(to: -18 ... 18)
+            inputGainDB: inputGainDB.clamped(to: -18 ... 18),
+            silenceGateThreshold: silenceGateThreshold.clamped(to: 0.005 ... 0.20)
         )
     }
 }

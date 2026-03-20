@@ -420,6 +420,50 @@ final class RendererStateTests: XCTestCase {
         XCTAssertFalse(liveEnergyVisible)
     }
 
+    func testRiemannTraversalSteeringStrengthMonotonicallyDampsHeading() {
+        let lowDampingControls = RendererControlState(
+            riemannDetail: 0.74,
+            riemannFlowRate: 0.72,
+            riemannZeroBloom: 0.30,
+            riemannSteeringStrength: 0.0,
+            featureAmplitude: 0.84,
+            lowBandEnergy: 0.88,
+            midBandEnergy: 0.12,
+            highBandEnergy: 0.20,
+            attackStrength: 0.62
+        )
+        let highDampingControls = RendererControlState(
+            riemannDetail: 0.74,
+            riemannFlowRate: 0.72,
+            riemannZeroBloom: 0.30,
+            riemannSteeringStrength: 1.0,
+            featureAmplitude: 0.84,
+            lowBandEnergy: 0.88,
+            midBandEnergy: 0.12,
+            highBandEnergy: 0.20,
+            attackStrength: 0.62
+        )
+
+        let low = riemannTraversalAdvance(
+            center: SIMD2<Float>(-0.75, 0.08),
+            zoom: 0.75,
+            heading: 0,
+            deltaTime: 1.0 / 60.0,
+            controls: lowDampingControls
+        )
+        let high = riemannTraversalAdvance(
+            center: SIMD2<Float>(-0.75, 0.08),
+            zoom: 0.75,
+            heading: 0,
+            deltaTime: 1.0 / 60.0,
+            controls: highDampingControls
+        )
+
+        let lowHeadingDelta = abs(atan2(sin(low.heading), cos(low.heading)))
+        let highHeadingDelta = abs(atan2(sin(high.heading), cos(high.heading)))
+        XCTAssertLessThanOrEqual(highHeadingDelta, lowHeadingDelta)
+    }
+
     func testContourFlowEvolveValueIsDeterministic() {
         let first = contourFlowEvolveValue(
             history: 0.35,
@@ -1776,8 +1820,8 @@ final class RendererStateTests: XCTestCase {
             lastSpawnTime: 1.20
         )
         let blockedBelowThreshold = shouldTriggerTunnelSyntheticSpawn(
-            evidence: 0.05,
-            previousEvidence: 0.04,
+            evidence: 0.012,
+            previousEvidence: 0.010,
             elapsedTime: 1.60,
             lastSpawnTime: 1.20
         )

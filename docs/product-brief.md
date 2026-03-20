@@ -46,8 +46,16 @@ The current repository work establishes the foundation, first real render spine,
 - one sparse root shell with routing seams
 - iOS and Mac Catalyst action chrome share a two-column tile deck (glass-forward, fullscreen as immediate action)
 - iOS uses medium-first sheets for actions; Catalyst uses adaptive popovers for short pickers and sheets for larger workflows
+- mode switching uses a hero pager sheet (one mode per page with giant icon, concise tags, and explicit `Switch` CTA) so browsing does not commit until apply
 - iOS live mode controls are in Settings sheet sections; Catalyst retains persistent bottom live controls for desktop tuning
 - Settings includes a glass appearance tile (`sun.max` / `moon.stars`) that toggles dark vs light glass chrome and switches idle ambient background black vs white with an ink-style transition
+- Settings includes an About subpage with glass link tiles for website, privacy policy, and support routes
+- Settings includes production pro-control systems:
+  - Performance Mode (`Auto`, `High Quality`, `Safe FPS`) plus thermal-aware fallback toggle
+  - Audio Calibration (`Calibrate Room Noise`, attack gate trim, silence gate trim)
+  - Mandelbrot Navigation Lock (`Guided Zoom` / `Free Flight`) plus steering-strength damping control
+  - Mode Defaults (`Set Current as Mode Default`, `Reset Mode Defaults`) independent from presets
+  - Session Recovery (debounced auto-save snapshot, restore-on-launch toggle, clean-state panic reset)
 - a full-screen performance canvas backed by Metal
 - five live modes (`Color Shift` + `Prism Field` + `Tunnel Cels` + `Fractal Caustics` + `Mandelbrot`) with stage-first composition
 - `Color Shift` supports:

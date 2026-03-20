@@ -47,10 +47,19 @@ Legacy/
 - iOS + Catalyst action chrome: shared 2-column tile deck
 - iOS: medium-first sheet presentation for action flows
 - Catalyst: adaptive action presentation (tile-anchored popovers for short pickers, sheets for larger flows)
+- mode picker sheet uses a hero pager (`TabView` pages + custom dots + explicit apply button), with preview-only swipe and apply-on-tap commit
 - iOS live controls moved into Settings sheet sections (Catalyst keeps persistent bottom panel)
 - preset browser is mode-scoped (active mode only) with apply/rename/delete flows
 - iOS live-controls save tile supports quick-save + inline rename for presets
 - appearance toggle is session-driven (`dark`/`light` glass) and re-renders shell + settings + canvas with an ink transition token
+- Settings includes a navigable About subpage (inside the same NavigationStack) with external website/privacy/support links
+- Settings includes production pro-control sections for:
+  - performance policy (`Auto`, `High Quality`, `Safe FPS`, thermal fallback)
+  - audio calibration (room-noise capture + attack/silence gate trims)
+  - Mandelbrot navigation lock (`Guided Zoom` / `Free Flight`) and steering damping
+  - mode defaults (save/reset current mode parameter baselines)
+  - session recovery (autosave/restore toggles + panic reset)
+- mode defaults and session recovery use dedicated persistence seams, separate from presets
 
 ### Domain models
 `Packages/ChromaDomain`
@@ -64,6 +73,7 @@ Legacy/
 - export profiles
 - sets/cues
 - audio feature frames
+- session state includes persisted `performanceSettings`, `audioCalibrationSettings`, and `sessionRecoverySettings` with decode-safe defaults
 
 ### Services and engines
 - `Packages/ChromaAudio`: audio input and calibration seams
@@ -72,6 +82,9 @@ Legacy/
 - `Packages/ChromaPresets`: preset persistence seam
   - disk-backed preset storage for runtime, placeholder service for tests
   - mode starter backfill adds one curated seed preset when an entire mode has no presets in local storage
+- `Packages/ChromaAppCore`: session persistence seams
+  - `ModeDefaultsService` stores per-mode default parameter snapshots
+  - `SessionRecoveryService` stores debounced session + parameter snapshots for launch restore
 - `Packages/ChromaDiagnostics`: diagnostics sampling/reporting seam
 - `Packages/ChromaRecorder`: recorder/export seam
   - `LiveRecorderService` captures renderer program-feed frames via renderer frame sink + optional mic audio from live audio samples
@@ -214,6 +227,7 @@ Task 005 analysis and metering extensions:
 - `AudioMeterFrame` carries both normalized envelope values and raw dBFS context (`rmsDBFS`, `peakDBFS`)
 - live analysis attack detection runs on dBFS-derived signal math rather than normalized envelope values
 - global `response.inputGain` is mapped into analysis tuning (`inputGainDB`) so response gain affects attack sensitivity and event generation, not only visual intensity
+- settings calibration now owns `attackThresholdDB` + `silenceGateThreshold`; app-core propagates both into `AudioAnalysisService.updateTuning(_:)` and renderer silence-gate behavior
 
 Task 008 pitch-reactive Color Shift extensions:
 - `AudioInputService` publishes lightweight mono sample frames (`AudioSampleFrame`) alongside meter frames

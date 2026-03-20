@@ -14,6 +14,7 @@ public struct RootShellView: View {
 #endif
     @State private var inkTransitionProgress: CGFloat = 0.001
     @State private var inkTransitionOpacity: Double = 0
+    @State private var inkTransitionResetWorkItem: DispatchWorkItem?
 
     public init(appViewModel: AppViewModel, sessionViewModel: SessionViewModel) {
         self.appViewModel = appViewModel
@@ -30,41 +31,39 @@ public struct RootShellView: View {
                     appViewModel.handleCanvasTap()
                 }
 
-            if showsChrome {
-                chromeScrims
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-
-                VStack(spacing: 0) {
-                    topChrome
-                    Spacer(minLength: 0)
-                    bottomChrome
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 18)
-                .transition(.opacity)
+            VStack(spacing: 0) {
+                topChrome
+                Spacer(minLength: 0)
+                bottomChrome
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 18)
+            .opacity(showsChrome ? 1 : 0)
+            .allowsHitTesting(showsChrome)
+            .accessibilityHidden(!showsChrome)
+            .animation(.easeInOut(duration: 0.22), value: showsChrome)
 
-            if showsRevealControl {
-                VStack {
-                    Spacer(minLength: 0)
-                    revealControl
-                        .padding(.bottom, 28)
-                }
-                .transition(.opacity)
+            VStack {
+                Spacer(minLength: 0)
+                revealControl
+                    .padding(.bottom, 28)
             }
+            .opacity(showsRevealControl ? 1 : 0)
+            .allowsHitTesting(showsRevealControl)
+            .accessibilityHidden(!showsRevealControl)
+            .animation(.easeInOut(duration: 0.18), value: showsRevealControl)
 
-            AppearanceInkTransitionOverlay(
-                color: isLightGlassAppearance ? Color.white : Color.black,
-                progress: inkTransitionProgress,
-                opacity: inkTransitionOpacity
-            )
-            .allowsHitTesting(false)
+            if inkTransitionOpacity > 0.001 {
+                AppearanceInkTransitionOverlay(
+                    color: isLightGlassAppearance ? Color.white : Color.black,
+                    progress: inkTransitionProgress,
+                    opacity: inkTransitionOpacity
+                )
+                .allowsHitTesting(false)
+            }
         }
         .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
-        .animation(.easeInOut(duration: 0.22), value: showsChrome)
-        .animation(.easeInOut(duration: 0.22), value: showsRevealControl)
         .sheet(item: Binding(
             get: { router.presentedSheet },
             set: { router.presentedSheet = $0 }
@@ -148,32 +147,6 @@ public struct RootShellView: View {
         let destination: AppSheetDestination?
         let action: () -> Void
         var isFullscreenAction: Bool = false
-    }
-
-    private var chromeScrims: some View {
-        ZStack {
-            LinearGradient(
-                colors: [scrimTopColor, .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-
-            LinearGradient(
-                colors: [.clear, scrimBottomColor],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-        }
-    }
-
-    private var scrimTopColor: Color {
-        isLightGlassAppearance ? Color.white.opacity(0.62) : Color.black.opacity(0.66)
-    }
-
-    private var scrimBottomColor: Color {
-        isLightGlassAppearance ? Color.white.opacity(0.28) : Color.black.opacity(0.32)
     }
 
     private var topChrome: some View {
@@ -582,7 +555,7 @@ public struct RootShellView: View {
 
     private var revealControl: some View {
         Button {
-            appViewModel.togglePerformanceMode()
+            appViewModel.exitPerformanceMode()
         } label: {
             Label("SHOW CONTROLS", systemImage: "line.3.horizontal.decrease.circle")
                 .font(ChromaTypography.action)
@@ -643,11 +616,11 @@ public struct RootShellView: View {
 
         let window = UIWindow(frame: externalScreen.bounds)
         window.screen = externalScreen
-        window.backgroundColor = isLightGlassAppearance ? .white : .black
+        window.backgroundColor = .black
         window.rootViewController = UIHostingController(
             rootView: PerformanceSurfaceView(sessionViewModel: sessionViewModel)
                 .ignoresSafeArea()
-                .background(isLightGlassAppearance ? Color.white : Color.black)
+                .background(Color.black)
         )
         window.isHidden = false
         externalProgramWindow = window
@@ -663,12 +636,21 @@ public struct RootShellView: View {
     }
 
     private func triggerInkTransition() {
+        inkTransitionResetWorkItem?.cancel()
         inkTransitionProgress = 0.001
         inkTransitionOpacity = 0.68
         withAnimation(.easeOut(duration: 0.75)) {
             inkTransitionProgress = 2.2
             inkTransitionOpacity = 0
         }
+
+        // Fail-safe reset so the overlay can never remain washed over the canvas.
+        let resetWorkItem = DispatchWorkItem {
+            inkTransitionProgress = 2.2
+            inkTransitionOpacity = 0
+        }
+        inkTransitionResetWorkItem = resetWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.82, execute: resetWorkItem)
     }
 }
 

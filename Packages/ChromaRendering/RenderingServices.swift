@@ -4,6 +4,11 @@ import MetalKit
 import QuartzCore
 import CoreVideo
 import simd
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 public protocol RendererService: AnyObject {
     var diagnosticsSummary: RendererDiagnosticsSummary { get }
@@ -76,7 +81,15 @@ public final class HeadlessRendererService: RendererService {
     }
 
     public func draw(in view: MTKView, size: CGSize) {
-        diagnosticsSummary.resolutionLabel = resolutionLabel(for: size)
+        let targetDrawableSize = preferredDrawableSize(for: view)
+        if targetDrawableSize.width >= 2, targetDrawableSize.height >= 2 {
+            if abs(view.drawableSize.width - targetDrawableSize.width) > 1 ||
+                abs(view.drawableSize.height - targetDrawableSize.height) > 1 {
+                view.drawableSize = targetDrawableSize
+            }
+        }
+
+        diagnosticsSummary.resolutionLabel = resolutionLabel(for: view.drawableSize)
     }
 }
 
@@ -104,6 +117,7 @@ public final class MetalRendererService: RendererService {
 
     private var lastPipelineRetryTime: CFTimeInterval?
     private var inFlightDrawableID: ObjectIdentifier?
+    private var inFlightDrawableSubmittedAt: CFTimeInterval?
     private var consecutiveCommandBufferErrors = 0
 
     private var ringPool = SpectralRingPool(capacity: kMaxSpectralRings)
@@ -154,6 +168,7 @@ public final class MetalRendererService: RendererService {
     private var lastRiemannFlowUpdateTime: CFTimeInterval?
     private var riemannSmoothedSteering = SIMD2<Float>(0, 0)
     private var riemannSmoothedIntensity: Float = 0
+    private var activePerformanceMode: RendererPerformanceMode = .auto
 
     public init(activeModeID: VisualModeID = .colorShift) {
         device = MTLCreateSystemDefaultDevice()
@@ -184,6 +199,9 @@ public final class MetalRendererService: RendererService {
         guard let device else {
             view.device = nil
             view.clearColor = MTLClearColorMake(0, 0, 0, 1)
+#if canImport(UIKit)
+            view.backgroundColor = .black
+#endif
             view.isPaused = true
             diagnosticsSummary.readinessStatus = .unavailable
             diagnosticsSummary.statusMessage = "Metal device unavailable"
@@ -199,7 +217,10 @@ public final class MetalRendererService: RendererService {
         view.framebufferOnly = false
         view.autoResizeDrawable = true
         view.isOpaque = true
-        view.drawableSize = view.bounds.size
+        view.drawableSize = preferredDrawableSize(for: view)
+#if canImport(UIKit)
+        view.backgroundColor = .black
+#endif
 
         do {
             pipelineStates = try pipelineStateBundle(for: device, drawablePixelFormat: view.colorPixelFormat)
@@ -254,7 +275,21 @@ public final class MetalRendererService: RendererService {
     }
 
     public func draw(in view: MTKView, size: CGSize) {
-        diagnosticsSummary.resolutionLabel = resolutionLabel(for: size)
+        let targetDrawableSize = preferredDrawableSize(for: view)
+        if targetDrawableSize.width >= 2, targetDrawableSize.height >= 2 {
+            if abs(view.drawableSize.width - targetDrawableSize.width) > 1 ||
+                abs(view.drawableSize.height - targetDrawableSize.height) > 1 {
+                view.drawableSize = targetDrawableSize
+            }
+        }
+
+        let drawableWidth = view.drawableSize.width.isFinite ? view.drawableSize.width : 1
+        let drawableHeight = view.drawableSize.height.isFinite ? view.drawableSize.height : 1
+        let renderSize = CGSize(
+            width: max(drawableWidth, 1),
+            height: max(drawableHeight, 1)
+        )
+        diagnosticsSummary.resolutionLabel = resolutionLabel(for: renderSize)
 
         guard let commandQueue else {
             droppedFrameCount += 1
@@ -277,10 +312,17 @@ public final class MetalRendererService: RendererService {
 
         let drawableID = ObjectIdentifier(drawable as AnyObject)
         if inFlightDrawableID == drawableID {
-            droppedFrameCount += 1
-            diagnosticsSummary.droppedFrameCount = droppedFrameCount
-            diagnosticsSummary.statusMessage = "Skipping duplicate drawable submission"
-            return
+            if let submittedAt = inFlightDrawableSubmittedAt, (now - submittedAt) > 0.25 {
+                // Recovery guard: if a completion callback was dropped after a driver hiccup,
+                // don't stay permanently blocked on the same drawable identifier.
+                inFlightDrawableID = nil
+                inFlightDrawableSubmittedAt = nil
+            } else {
+                droppedFrameCount += 1
+                diagnosticsSummary.droppedFrameCount = droppedFrameCount
+                diagnosticsSummary.statusMessage = "Skipping duplicate drawable submission"
+                return
+            }
         }
 
         guard let pipelineStates else {
@@ -305,10 +347,11 @@ public final class MetalRendererService: RendererService {
         updateColorShiftHuePhase(now: now, state: currentSurfaceState)
         updateFractalFlowPhase(now: now, state: currentSurfaceState)
         updateRiemannFlowPhase(now: now, state: currentSurfaceState)
-        tuneQualityForDrawableSize(size, modeID: currentSurfaceState.activeModeID)
+        applyPerformanceModeIfNeeded(controls: currentSurfaceState.controls)
+        tuneQualityForDrawableSize(renderSize, modeID: currentSurfaceState.activeModeID)
         var uniforms = makeUniforms(
             time: elapsed,
-            drawableSize: size,
+            drawableSize: renderSize,
             state: currentSurfaceState,
             ringCount: 0,
             shimmerSampleCount: spectralQuality.shimmerSampleCount,
@@ -352,7 +395,7 @@ public final class MetalRendererService: RendererService {
            let device,
            let frame = latestCameraFeedbackFrame,
            let cameraTextureBundle = makeCameraTexture(from: frame),
-           var feedbackTargets = ensureColorFeedbackTargets(for: size, device: device),
+           var feedbackTargets = ensureColorFeedbackTargets(for: renderSize, device: device),
            encodeColorFeedbackPasses(
                commandBuffer: commandBuffer,
                drawableRenderPassDescriptor: renderPassDescriptor,
@@ -374,7 +417,7 @@ public final class MetalRendererService: RendererService {
            let prismPipelines = pipelineStates.prism,
            let sampler = linearSampler,
            let device,
-           let targets = ensurePrismTargets(for: size, device: device) {
+           let targets = ensurePrismTargets(for: renderSize, device: device) {
             spawnPrismImpulseIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let impulseCount = updatePrismImpulseGPUData(
                 elapsedTime: elapsed,
@@ -407,13 +450,16 @@ public final class MetalRendererService: RendererService {
            let tunnelPipelines = pipelineStates.tunnel,
            let sampler = linearSampler,
            let device,
-           let targets = ensureTunnelTargets(for: size, device: device) {
+           let targets = ensureTunnelTargets(for: renderSize, device: device) {
             spawnTunnelShapeIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let shapeCount = updateTunnelShapeGPUData(
                 controls: currentSurfaceState.controls,
                 elapsedTime: elapsed,
                 shapeLimit: tunnelQuality.activeShapeLimit
             )
+            diagnosticsSummary.statusMessage = shapeCount > 0
+                ? "Tunnel cels active (\(shapeCount))"
+                : "Tunnel cels waiting for attack"
             uniforms.tunnelShapeCount = shapeCount
             uniforms.tunnelTrailSampleCount = tunnelQuality.trailSampleCount
             uniforms.tunnelDispersionSampleCount = tunnelQuality.dispersionSampleCount
@@ -441,7 +487,7 @@ public final class MetalRendererService: RendererService {
            let fractalPipelines = pipelineStates.fractal,
            let sampler = linearSampler,
            let device,
-           let targets = ensureFractalTargets(for: size, device: device) {
+           let targets = ensureFractalTargets(for: renderSize, device: device) {
             spawnFractalPulseIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let pulseCount = updateFractalPulseGPUData(
                 elapsedTime: elapsed,
@@ -474,7 +520,7 @@ public final class MetalRendererService: RendererService {
            let riemannPipelines = pipelineStates.riemann,
            let sampler = linearSampler,
            let device,
-           let targets = ensureRiemannTargets(for: size, device: device) {
+           let targets = ensureRiemannTargets(for: renderSize, device: device) {
             spawnRiemannAccentIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let accentCount = updateRiemannAccentGPUData(
                 elapsedTime: elapsed,
@@ -2073,16 +2119,16 @@ public final class MetalRendererService: RendererService {
             let ringDirection = SIMD2<Float>(cos(sectorAngle), sin(sectorAngle))
             let squareEdge = ringDirection / max(max(abs(ringDirection.x), abs(ringDirection.y)), 0.0001)
             let tangent = simd_normalize(SIMD2<Float>(-squareEdge.y, squareEdge.x))
-            let laneSpread = mix(0.02, 0.18, min(max((shapeScale * 0.72) + (jitterB * 0.28), 0), 1))
-            let laneJitter = jitterA * mix(0.005, 0.03, 1 - min(max(shapeScale, 0), 1))
+            let laneSpread = mix(0.06, 0.30, min(max((shapeScale * 0.72) + (jitterB * 0.28), 0), 1))
+            let laneJitter = jitterA * mix(0.010, 0.060, 1 - min(max(shapeScale, 0), 1))
             let laneOrigin = center + (squareEdge * laneSpread) + (tangent * laneJitter)
             let axisSeed = simd_normalize(squareEdge + (tangent * (jitterA * 0.45)))
-            let forwardSpeed = mix(0.08, 0.72, min(max((depthSpeed * 0.64) + (dominantEnergy * 0.36), 0), 1))
-            let depthOffset = 0.01 + (jitterC * 0.08)
-            let baseScale = mix(0.72, 2.40, min(max((shapeScale * 0.70) + (jitterB * 0.30), 0), 1))
+            let forwardSpeed = mix(0.22, 1.25, min(max((depthSpeed * 0.64) + (dominantEnergy * 0.36), 0), 1))
+            let depthOffset = 0.04 + (jitterC * 0.18)
+            let baseScale = mix(0.10, 0.42, min(max((shapeScale * 0.70) + (jitterB * 0.30), 0), 1))
             let hueShift = (Float(sector) / 12.0) + (jitterA * 0.08)
-            let sustainLevel = min(max(0.42 + (attackStrength * 0.35), 0.22), 0.96)
-            let decayShape = 0.85 + (jitterC * 0.70)
+            let sustainLevel = min(max(0.55 + (attackStrength * 0.35), 0.45), 1.0)
+            let decayShape = 0.90 + (jitterC * 0.55)
             let releaseDuration = mix(0.25, 2.50, min(max(releaseTail, 0), 1))
 
             return TunnelShapeEvent(
@@ -2111,7 +2157,7 @@ public final class MetalRendererService: RendererService {
         shapeLimit: Int
     ) -> UInt32 {
         let activeLimit = max(1, min(shapeLimit, kMaxTunnelShapes))
-        let sustainOnThreshold: Float = 0.10
+        let sustainOnThreshold: Float = 0.06
 
         let maxBand = Float(max(controls.lowBandEnergy, max(controls.midBandEnergy, controls.highBandEnergy)))
         let sidechainEnergy = min(max((Float(controls.featureAmplitude) * 0.58) + (maxBand * 0.30) + (Float(controls.attackStrength) * 0.12), 0), 1)
@@ -2181,42 +2227,6 @@ public final class MetalRendererService: RendererService {
             }
 
             tunnelShapePool.events[index] = event
-        }
-
-        if activeCount == 0 {
-            let syntheticExcitation = max(
-                sidechainEnergy,
-                max(Float(controls.attackStrength), tunnelSyntheticSpawnEvidence(controls: controls))
-            )
-            if syntheticExcitation >= 0.04 {
-                let variant = Float(min(max(Int(controls.tunnelVariant.rounded()), 0), 2))
-                let shapeScale = Float(controls.tunnelShapeScale)
-                let depthSpeed = Float(controls.tunnelDepthSpeed)
-                let depthPulse = 0.55 + (0.45 * sin(elapsedTime * (1.8 + (depthSpeed * 2.4))))
-                var hue = (elapsedTime * 0.07) +
-                    (Float(controls.lowBandEnergy) * 0.18) +
-                    (Float(controls.highBandEnergy) * 0.11)
-                hue.formTruncatingRemainder(dividingBy: 1)
-                if hue < 0 {
-                    hue += 1
-                }
-                tunnelShapeGPUData[0] = TunnelShapeGPUData(
-                    positionDepthScaleEnvelope: SIMD4<Float>(
-                        0,
-                        0,
-                        0.24 + (0.07 * (1 - depthPulse)),
-                        mix(0.90, 2.90, shapeScale) * mix(0.72, 1.0, syntheticExcitation)
-                    ),
-                    forwardHueVariantSeed: SIMD4<Float>(
-                        0.42 + (depthSpeed * 0.35),
-                        hue,
-                        variant,
-                        min(max(0.42 + (syntheticExcitation * 0.82), 0), 1)
-                    ),
-                    axisDecaySustainRelease: SIMD4<Float>(1, 0, 0.95, 0)
-                )
-                activeCount = 1
-            }
         }
 
         if activeCount < tunnelShapeGPUData.count {
@@ -2457,12 +2467,14 @@ public final class MetalRendererService: RendererService {
         retainedCameraTexture: CVMetalTexture? = nil
     ) {
         inFlightDrawableID = drawableID
+        inFlightDrawableSubmittedAt = CACurrentMediaTime()
         inFlightCameraTextureRef = retainedCameraTexture
         commandBuffer.addCompletedHandler { [weak self] buffer in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if self.inFlightDrawableID == drawableID {
                     self.inFlightDrawableID = nil
+                    self.inFlightDrawableSubmittedAt = nil
                 }
                 self.inFlightCameraTextureRef = nil
 
@@ -2582,6 +2594,15 @@ public final class MetalRendererService: RendererService {
         riemannCameraHeading: Float
     ) -> RendererFrameUniforms {
         let controls = state.controls.clamped()
+        let safeTime = time.isFinite ? time : 0
+        let safeRiemannCenter = SIMD2<Float>(
+            riemannCameraCenter.x.isFinite ? riemannCameraCenter.x : -0.8,
+            riemannCameraCenter.y.isFinite ? riemannCameraCenter.y : 0
+        )
+        let safeRiemannZoom = riemannCameraZoom.clamped(to: 0.000_000_5 ... 16.0, default: 1.0)
+        let safeRiemannHeading = riemannCameraHeading.isFinite ? riemannCameraHeading : 0
+        let safeHue = colorShiftHuePhase.isFinite ? colorShiftHuePhase : 0
+        let safeSaturation = colorShiftSaturation.clamped(to: 0.22 ... 0.98, default: 0.84)
         let attackIDLow = UInt32(truncatingIfNeeded: controls.attackID)
         let attackIDHigh = UInt32(truncatingIfNeeded: controls.attackID >> 32)
         let colorShiftBlackout = controls.colorFeedbackBlackout
@@ -2590,32 +2611,36 @@ public final class MetalRendererService: RendererService {
             featureAmplitude: controls.featureAmplitude,
             lowBandEnergy: controls.lowBandEnergy,
             midBandEnergy: controls.midBandEnergy,
-            highBandEnergy: controls.highBandEnergy
+            highBandEnergy: controls.highBandEnergy,
+            silenceThreshold: controls.silenceGateThreshold
         )
         let tunnelBlackout = shouldBlackoutTunnel(
             noImageInSilence: controls.noImageInSilence,
             featureAmplitude: controls.featureAmplitude,
             lowBandEnergy: controls.lowBandEnergy,
             midBandEnergy: controls.midBandEnergy,
-            highBandEnergy: controls.highBandEnergy
+            highBandEnergy: controls.highBandEnergy,
+            silenceThreshold: controls.silenceGateThreshold
         )
         let fractalBlackout = shouldBlackoutFractal(
             noImageInSilence: controls.noImageInSilence,
             featureAmplitude: controls.featureAmplitude,
             lowBandEnergy: controls.lowBandEnergy,
             midBandEnergy: controls.midBandEnergy,
-            highBandEnergy: controls.highBandEnergy
+            highBandEnergy: controls.highBandEnergy,
+            silenceThreshold: controls.silenceGateThreshold
         )
         let riemannBlackout = shouldBlackoutRiemann(
             noImageInSilence: controls.noImageInSilence,
             featureAmplitude: controls.featureAmplitude,
             lowBandEnergy: controls.lowBandEnergy,
             midBandEnergy: controls.midBandEnergy,
-            highBandEnergy: controls.highBandEnergy
+            highBandEnergy: controls.highBandEnergy,
+            silenceThreshold: controls.silenceGateThreshold
         )
 
         return RendererFrameUniforms(
-            time: time,
+            time: safeTime,
             intensity: Float(controls.intensity),
             scale: Float(controls.scale),
             motion: Float(controls.motion),
@@ -2669,12 +2694,12 @@ public final class MetalRendererService: RendererService {
             riemannAccentCount: riemannAccentCount,
             riemannBlackout: riemannBlackout ? 1 : 0,
             riemannFlowPhase: riemannFlowPhase,
-            riemannCameraCenter: riemannCameraCenter,
-            riemannCameraZoom: riemannCameraZoom,
-            riemannCameraHeading: riemannCameraHeading,
+            riemannCameraCenter: safeRiemannCenter,
+            riemannCameraZoom: safeRiemannZoom,
+            riemannCameraHeading: safeRiemannHeading,
             noImageInSilence: controls.noImageInSilence ? 1 : 0,
-            colorShiftHue: colorShiftHuePhase,
-            colorShiftSaturation: colorShiftSaturation,
+            colorShiftHue: safeHue,
+            colorShiftSaturation: safeSaturation,
             colorShiftBlackout: colorShiftBlackout ? 1 : 0,
             pitchConfidence: Float(controls.pitchConfidence),
             stablePitchClass: Int32(controls.stablePitchClass ?? -1),
@@ -2765,6 +2790,8 @@ public final class MetalRendererService: RendererService {
         let deltaTime = Float(max(0, min(now - lastRiemannFlowUpdateTime, 0.25)))
         guard deltaTime > 0 else { return }
         let controls = state.controls.clamped()
+        let steeringStrength = Float(controls.riemannSteeringStrength).clamped(to: 0 ... 1)
+        let isFreeFlight = controls.riemannNavigationMode >= 0.5
         let flowRate = Float(controls.riemannFlowRate)
         let rawIntensity = riemannWeightedTraversalIntensity(controls: controls)
         let intensityAlpha = 1 - exp(-(deltaTime * mix(2.0, 6.0, flowRate)))
@@ -2774,7 +2801,10 @@ public final class MetalRendererService: RendererService {
 
         let rawSteering = riemannSteeringVector(controls: controls)
         let rawSteeringMagnitude = simd_length(rawSteering)
-        let steeringDeadzone = mix(0.24, 0.06, smoothedIntensity) * mix(1.0, 0.80, flowRate)
+        let steeringDeadzone =
+            mix(0.24, 0.06, smoothedIntensity) *
+            mix(1.0, 0.80, flowRate) *
+            mix(1.0, 1.85, steeringStrength)
         let steeringTarget: SIMD2<Float>
         if rawSteeringMagnitude <= steeringDeadzone {
             steeringTarget = .zero
@@ -2782,7 +2812,9 @@ public final class MetalRendererService: RendererService {
             let scaledMagnitude = (rawSteeringMagnitude - steeringDeadzone) / max(1 - steeringDeadzone, 0.0001)
             steeringTarget = (rawSteering / max(rawSteeringMagnitude, 0.0001)) * scaledMagnitude
         }
-        let steeringAlpha = 1 - exp(-(deltaTime * mix(1.8, 7.2, smoothedIntensity)))
+        let steeringAlpha =
+            (1 - exp(-(deltaTime * mix(1.8, 7.2, smoothedIntensity)))) *
+            mix(1.0, 0.32, steeringStrength)
         riemannSmoothedSteering += (steeringTarget - riemannSmoothedSteering) * steeringAlpha
 
         riemannFlowPhase = riemannFlowPhaseAdvance(
@@ -2790,6 +2822,25 @@ public final class MetalRendererService: RendererService {
             deltaTime: deltaTime,
             controls: controls
         )
+
+        if isFreeFlight {
+            let traversal = riemannTraversalAdvance(
+                center: riemannCameraCenter,
+                zoom: riemannCameraZoom,
+                heading: riemannCameraHeading,
+                deltaTime: deltaTime,
+                controls: controls,
+                steeringOverride: riemannSmoothedSteering,
+                intensityOverride: smoothedIntensity
+            )
+            riemannCameraCenter = traversal.center
+            riemannCameraZoom = traversal.zoom
+            riemannCameraHeading = traversal.heading
+            riemannRouteTargetCenter = traversal.center
+            riemannRouteTargetZoom = traversal.zoom
+            riemannLastRouteUpdateTime = now
+            return
+        }
 
         let centerStructure = mandelbrotLocalStructureScore(
             center: riemannCameraCenter,
@@ -2969,7 +3020,10 @@ public final class MetalRendererService: RendererService {
                 headingGain = routeBlend * 0.16
             }
             let headingDrive = ((smoothedIntensity - 0.08) / 0.40).clamped(to: 0 ... 1)
-            let maxTurnRate = mix(0.30, 2.20, headingDrive) * mix(0.42, 1.0, Float(controls.riemannFlowRate))
+            let maxTurnRate =
+                mix(0.30, 2.20, headingDrive) *
+                mix(0.42, 1.0, Float(controls.riemannFlowRate)) *
+                mix(1.0, 0.34, steeringStrength)
             let maxStep = maxTurnRate * deltaTime
             let boundedDelta = headingDelta.clamped(to: -maxStep ... maxStep)
             traversal.heading = (traversal.heading + (boundedDelta * headingGain)).remainder(dividingBy: 2 * .pi)
@@ -2991,14 +3045,33 @@ public final class MetalRendererService: RendererService {
             smoothedFrameTimeMS = (smoothedFrameTimeMS * 0.9) + (deltaMS * 0.1)
         }
 
-        if deltaMS > 28 {
+        let frameSpikeThresholdMS: Double
+        let degradeStreakThreshold: Int
+        let shouldSuppressNonCriticalDegrade: Bool
+        switch activePerformanceMode {
+        case .safeFPS:
+            frameSpikeThresholdMS = 22
+            degradeStreakThreshold = 6
+            shouldSuppressNonCriticalDegrade = false
+        case .highQuality:
+            frameSpikeThresholdMS = 30
+            degradeStreakThreshold = 30
+            shouldSuppressNonCriticalDegrade = true
+        case .auto:
+            frameSpikeThresholdMS = 28
+            degradeStreakThreshold = 12
+            shouldSuppressNonCriticalDegrade = false
+        }
+
+        if deltaMS > frameSpikeThresholdMS {
             slowFrameStreak += 1
         } else {
             slowFrameStreak = max(0, slowFrameStreak - 1)
         }
 
-        if slowFrameStreak >= 12 {
-            if degradeActiveModeQuality(reason: "frame-time spike") {
+        if slowFrameStreak >= degradeStreakThreshold {
+            let allowDegrade = !shouldSuppressNonCriticalDegrade || smoothedFrameTimeMS > 42
+            if allowDegrade, degradeActiveModeQuality(reason: "frame-time spike") {
                 slowFrameStreak = 0
             }
         }
@@ -3013,6 +3086,40 @@ public final class MetalRendererService: RendererService {
                 diagnosticsSummary.statusMessage = "Metal surface ready"
             }
         }
+    }
+
+    private func applyPerformanceModeIfNeeded(controls: RendererControlState) {
+        let requestedMode = RendererPerformanceMode.from(index: controls.performanceModeIndex)
+        guard requestedMode != activePerformanceMode else { return }
+        activePerformanceMode = requestedMode
+
+        switch requestedMode {
+        case .auto, .highQuality:
+            spectralQuality = .cinematicHeavy
+            attackParticleQuality = .cinematicHeavy
+            prismQuality = .cinematicHeavy
+            tunnelQuality = .cinematicHeavy
+            fractalQuality = .cinematicHeavy
+            riemannQuality = .cinematicHeavy
+        case .safeFPS:
+            spectralQuality = .safeFPS
+            attackParticleQuality = .safeFPS
+            prismQuality = .safeFPS
+            tunnelQuality = .safeFPS
+            fractalQuality = .safeFPS
+            riemannQuality = .safeFPS
+        }
+
+        diagnosticsSummary.statusMessage = {
+            switch requestedMode {
+            case .auto:
+                return "Performance mode: Auto"
+            case .highQuality:
+                return "Performance mode: High Quality"
+            case .safeFPS:
+                return "Performance mode: Safe FPS"
+            }
+        }()
     }
 
     private func tuneQualityForDrawableSize(_ size: CGSize, modeID: VisualModeID) {
@@ -3184,11 +3291,29 @@ private struct RiemannRenderTargets {
     var accents: MTLTexture
 }
 
+private enum RendererPerformanceMode: Equatable {
+    case auto
+    case highQuality
+    case safeFPS
+
+    static func from(index: Double) -> RendererPerformanceMode {
+        switch Int(index.rounded()) {
+        case 1:
+            return .highQuality
+        case 2:
+            return .safeFPS
+        default:
+            return .auto
+        }
+    }
+}
+
 private struct SpectralQualityProfile {
     var activeRingLimit: Int
     var shimmerSampleCount: UInt32
 
     static let cinematicHeavy = SpectralQualityProfile(activeRingLimit: 48, shimmerSampleCount: 12)
+    static let safeFPS = SpectralQualityProfile(activeRingLimit: 24, shimmerSampleCount: 6)
 
     mutating func degrade() -> Bool {
         if activeRingLimit > 32 {
@@ -3210,6 +3335,7 @@ private struct AttackParticleQualityProfile {
     var trailSampleCount: UInt32
 
     static let cinematicHeavy = AttackParticleQualityProfile(activeParticleLimit: 128, trailSampleCount: 11)
+    static let safeFPS = AttackParticleQualityProfile(activeParticleLimit: 72, trailSampleCount: 6)
 
     mutating func degrade() -> Bool {
         if activeParticleLimit > 96 {
@@ -3235,6 +3361,11 @@ private struct PrismQualityProfile {
         activeImpulseLimit: 32,
         facetSampleCount: 12,
         dispersionSampleCount: 10
+    )
+    static let safeFPS = PrismQualityProfile(
+        activeImpulseLimit: 16,
+        facetSampleCount: 7,
+        dispersionSampleCount: 5
     )
 
     mutating func degrade() -> Bool {
@@ -3264,6 +3395,11 @@ private struct TunnelQualityProfile {
         trailSampleCount: 9,
         dispersionSampleCount: 8
     )
+    static let safeFPS = TunnelQualityProfile(
+        activeShapeLimit: 32,
+        trailSampleCount: 5,
+        dispersionSampleCount: 4
+    )
 
     mutating func degrade() -> Bool {
         if activeShapeLimit > 48 {
@@ -3292,6 +3428,11 @@ private struct FractalQualityProfile {
         orbitSampleCount: 42,
         trapSampleCount: 12
     )
+    static let safeFPS = FractalQualityProfile(
+        activePulseLimit: 16,
+        orbitSampleCount: 28,
+        trapSampleCount: 7
+    )
 
     mutating func degrade() -> Bool {
         if activePulseLimit > 24 {
@@ -3319,6 +3460,11 @@ private struct RiemannQualityProfile {
         activeAccentLimit: 24,
         termCount: 36,
         trapSampleCount: 12
+    )
+    static let safeFPS = RiemannQualityProfile(
+        activeAccentLimit: 10,
+        termCount: 14,
+        trapSampleCount: 6
     )
 
     mutating func degrade() -> Bool {
@@ -4301,8 +4447,12 @@ private func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
 }
 
 private extension Float {
-    func clamped(to range: ClosedRange<Float>) -> Float {
-        min(max(self, range.lowerBound), range.upperBound)
+    func clamped(to range: ClosedRange<Float>, default defaultValue: Float? = nil) -> Float {
+        guard isFinite else {
+            let fallback = defaultValue ?? ((range.lowerBound + range.upperBound) * 0.5)
+            return Swift.min(Swift.max(fallback, range.lowerBound), range.upperBound)
+        }
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 
@@ -5449,6 +5599,7 @@ func riemannTraversalAdvance(
     let flowRate = Float(controls.riemannFlowRate)
     let detail = Float(controls.riemannDetail)
     let zeroBloom = Float(controls.riemannZeroBloom)
+    let steeringStrength = Float(controls.riemannSteeringStrength).clamped(to: 0 ... 1)
     let rawIntensity = (intensityOverride ?? riemannWeightedTraversalIntensity(controls: controls)).clamped(to: 0 ... 1)
     let activationOn: Float = 0.072
     let activationOff: Float = 0.046
@@ -5465,12 +5616,21 @@ func riemannTraversalAdvance(
     let speedDrive = drive * drive * (3 - (2 * drive))
     let steering = steeringOverride ?? riemannSteeringVector(controls: controls)
     let cueMagnitude = simd_length(steering)
-    let cueDeadzone = mix(0.22, 0.05, speedDrive) * mix(1.0, 0.82, flowRate)
+    let cueDeadzone =
+        mix(0.22, 0.05, speedDrive) *
+        mix(1.0, 0.82, flowRate) *
+        mix(1.0, 2.10, steeringStrength)
     let cueStrength = ((cueMagnitude - cueDeadzone) / max(1 - cueDeadzone, 0.0001)).clamped(to: 0 ... 1)
     let targetHeading = cueStrength > 0.001 ? atan2(steering.y, steering.x) : heading
     let headingDelta = atan2(sin(targetHeading - heading), cos(targetHeading - heading))
-    let turnGain = min(max(deltaTime * (1.2 + flowRate * 2.6 + speedDrive * 3.2), 0), 1) * (0.10 + cueStrength * 0.90)
-    let maxTurnRate = mix(0.45, 2.90, cueStrength) * mix(0.42, 1.0, flowRate)
+    let turnGain =
+        min(max(deltaTime * (1.2 + flowRate * 2.6 + speedDrive * 3.2), 0), 1) *
+        (0.10 + cueStrength * 0.90) *
+        mix(1.0, 0.34, steeringStrength)
+    let maxTurnRate =
+        mix(0.45, 2.90, cueStrength) *
+        mix(0.42, 1.0, flowRate) *
+        mix(1.0, 0.30, steeringStrength)
     let maxTurnStep = maxTurnRate * deltaTime
     let boundedHeadingDelta = headingDelta.clamped(to: -maxTurnStep ... maxTurnStep)
     let nextHeading = (heading + boundedHeadingDelta * turnGain).remainder(dividingBy: 2 * .pi)
@@ -5865,9 +6025,9 @@ func shouldTriggerTunnelSyntheticSpawn(
     previousEvidence: Float,
     elapsedTime: Float,
     lastSpawnTime: Float,
-    threshold: Float = 0.08,
-    lowThreshold: Float = 0.04,
-    cooldown: Float = 0.16
+    threshold: Float = 0.03,
+    lowThreshold: Float = 0.015,
+    cooldown: Float = 0.12
 ) -> Bool {
     guard (elapsedTime - lastSpawnTime) >= max(cooldown, 0) else {
         return false
@@ -6638,7 +6798,10 @@ fragment float4 renderer_tunnel_field_fragment(
     float3 base = mix(baseA, baseB, fog);
     float3 color = (base * (0.26 + (0.42 * fog))) + (prism * energy * 0.34);
     color += float3(0.0010, 0.0018, 0.0030) * (0.12 + (uniforms.featureAmplitude * 0.58));
-    return float4(color, max(energy, 0.0001));
+    if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) || !isfinite(energy)) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    return float4(clamp(color, float3(0.0), float3(6.0)), 1.0);
 }
 
 fragment float4 renderer_tunnel_shapes_fragment(
@@ -6669,7 +6832,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
         float perspective = 1.0 / (0.35 + depth);
         float2 projected = lane * perspective;
-        float size = scale * perspective * mix(0.50, 1.20, uniforms.tunnelShapeScale);
+        float size = scale * perspective * mix(0.95, 2.10, uniforms.tunnelShapeScale);
         float2 local = (point - projected) / max(size, 0.0001);
 
         float axisAngle = atan2(shape.axisDecaySustainRelease.y, shape.axisDecaySustainRelease.x);
@@ -6695,7 +6858,7 @@ fragment float4 renderer_tunnel_shapes_fragment(
         float releaseDamp = mix(1.0, 0.20, releaseMix);
         float depthFade = smoothstep(9.0, 0.08, depth);
         float localEnergy = (edgeGlow + core + outline) * envelope * releaseDamp * depthFade;
-        localEnergy *= (1.25 + (uniforms.attackStrength * 0.95));
+        localEnergy *= (1.55 + (uniforms.attackStrength * 1.20));
 
         float hue = fract(shape.forwardHueVariantSeed.y + (shape.forwardHueVariantSeed.x * 0.03) + (local.x * 0.06));
         float3 shapeColor = spectralPalette(hue);
@@ -6706,7 +6869,10 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
     float3 field = tunnelField.sample(linearSampler, in.uv).rgb;
     color += field * 0.20;
-    return float4(color, max(energy, 0.0001));
+    if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) || !isfinite(energy)) {
+        return float4(clamp(field, float3(0.0), float3(4.0)), 1.0);
+    }
+    return float4(clamp(color, float3(0.0), float3(2.4)), 1.0);
 }
 
 fragment float4 renderer_tunnel_composite_fragment(
@@ -6759,7 +6925,10 @@ fragment float4 renderer_tunnel_composite_fragment(
 
     float vignette = smoothstep(1.62, 0.12, squareRadius);
     composed *= vignette;
-    return float4(composed, 1.0);
+    if (!isfinite(composed.x) || !isfinite(composed.y) || !isfinite(composed.z)) {
+        return float4(clamp(field, float3(0.0), float3(3.0)), 1.0);
+    }
+    return float4(clamp(composed, float3(0.0), float3(1.8)), 1.0);
 }
 
 fragment float4 renderer_fractal_field_fragment(
@@ -7192,4 +7361,16 @@ private func resolutionLabel(for size: CGSize) -> String {
         return "Pending surface"
     }
     return "\(width) × \(height)"
+}
+
+private func preferredDrawableSize(for view: MTKView) -> CGSize {
+    #if canImport(UIKit)
+    let scale = max(view.window?.screen.scale ?? UIScreen.main.scale, 1)
+    #else
+    let scale = max(view.window?.screen?.backingScaleFactor ?? 1, 1)
+    #endif
+    return CGSize(
+        width: max(1, view.bounds.width * scale),
+        height: max(1, view.bounds.height * scale)
+    )
 }

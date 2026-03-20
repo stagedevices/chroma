@@ -18,12 +18,17 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - fullscreen chrome-hide/reveal behavior
 - iOS + Catalyst tile-based top action deck (2-column tiles)
 - iOS medium-first sheet routing, Catalyst adaptive popover/sheet routing
+- modes sheet rendered as a hero pager with explicit apply CTA (swipe previews only; no implicit mode commit)
 - mode-style pickers for Tunnel `Variant` and Fractal/Mandelbrot `Palette` (sheet on iOS, popover on Catalyst)
 - iOS settings sheet as the home for live mode controls (persistent bottom sliders removed on iOS)
+- settings pro-control sections for performance policy, audio calibration, Mandelbrot navigation lock, mode defaults, and session recovery
 - settings appearance tile toggles light/dark glass theme (`sun.max` / `moon.stars`) and triggers shared ink-transition rerender
+- settings includes an in-stack About subpage with glass link tiles (website/privacy/support) opened via external browser routing
 - custom hue-range editor row (dual handle + inside/outside) for Color Shift controls in both shell/settings control surfaces
 - bottom full-width action tile expansion for icon-first live controls, including Color Shift `Excitement Mode` segmented selection
 - mode-scoped preset browser and quick-save/inline-rename preset interactions
+- mode defaults persistence flow (save/reset current mode defaults, apply defaults on mode switch)
+- session recovery flow (debounced autosave snapshot, restore on launch, clean-state panic reset)
 - iOS export sheet flow with live capture controls (`Include Mic Audio`, start/stop, elapsed/status, share handoff)
 - iOS external-program window host wiring (device operator UI + clean external program feed)
 
@@ -63,6 +68,7 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - `CameraFeedbackService`
 - `PlaceholderCameraFeedbackService`
 - `LiveCameraFeedbackService` (front camera capture for Color Shift feedback)
+- `LiveInputCalibrationService` (ambient capture window -> attack/silence threshold recommendations)
 
 ### `Packages/ChromaAnalysis`
 - `AudioAnalysisService`
@@ -92,6 +98,10 @@ Owns the app entry point, platform scene configuration, app assets, and target m
 - `DiskPresetService` for local persisted presets
   - startup mode-gap backfill from curated seed presets (one starter per missing mode)
 - placeholder preset persistence for tests and lightweight scaffolding
+
+### `Packages/ChromaAppCore` (persistence seams)
+- `ModeDefaultsService` + disk/placeholder implementations
+- `SessionRecoveryService` + disk/placeholder implementations
 
 ### `Packages/ChromaDiagnostics`
 - `DiagnosticsService`

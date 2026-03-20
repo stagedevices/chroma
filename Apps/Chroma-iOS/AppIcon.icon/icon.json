@@ -130,7 +130,7 @@
         {
           "blend-mode" : "plus-lighter",
           "fill" : {
-            "solid" : "srgb:0.99953,0.98836,0.47266,1.00000"
+            "solid" : "srgb:0.99942,0.98555,0.00000,1.00000"
           },
           "glass" : true,
           "image-name" : "c 2.png",
