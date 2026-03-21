@@ -90,6 +90,9 @@ public struct RootShellView: View {
         .onChange(of: sessionViewModel.session.availableDisplayTargets) { _, _ in
             syncExternalProgramWindow()
         }
+        .onChange(of: sessionViewModel.isLightGlassAppearance) { _, _ in
+            syncExternalProgramWindow()
+        }
         .onDisappear {
             sessionViewModel.stopRealtimeAudioPipeline()
             releaseExternalProgramWindow()
@@ -134,6 +137,10 @@ public struct RootShellView: View {
 
     private var isRiemannCorridorMode: Bool {
         sessionViewModel.showsRiemannPaletteAction
+    }
+
+    private var isCustomMode: Bool {
+        sessionViewModel.showsCustomBuilderAction
     }
 
     private var usesTileActionDeck: Bool {
@@ -232,6 +239,13 @@ public struct RootShellView: View {
                         sessionViewModel.cycleRiemannPaletteVariant()
                     }
                 }
+                if isCustomMode {
+                    chromeButton(
+                        title: "Builder",
+                        systemImage: "point.3.connected.trianglepath.dotted",
+                        action: appViewModel.presentCustomPatchBuilder
+                    )
+                }
                 chromeButton(title: "Presets", systemImage: "square.stack", action: appViewModel.presentPresetBrowser)
                 chromeButton(title: "Export", systemImage: "record.circle", action: appViewModel.presentRecorderExport)
                 chromeButton(title: "Settings", systemImage: "gearshape", action: appViewModel.presentSettingsDiagnostics)
@@ -275,6 +289,13 @@ public struct RootShellView: View {
                             appViewModel.registerPerformanceInteraction()
                             sessionViewModel.cycleRiemannPaletteVariant()
                         }
+                    }
+                    if isCustomMode {
+                        chromeButton(
+                            title: "Builder",
+                            systemImage: "point.3.connected.trianglepath.dotted",
+                            action: appViewModel.presentCustomPatchBuilder
+                        )
                     }
                     chromeButton(title: "Presets", systemImage: "square.stack", action: appViewModel.presentPresetBrowser)
                     chromeButton(title: "Export", systemImage: "record.circle", action: appViewModel.presentRecorderExport)
@@ -366,6 +387,16 @@ public struct RootShellView: View {
                     systemImage: "paintpalette",
                     destination: .riemannPalettePicker,
                     action: appViewModel.presentRiemannPalettePicker
+                )
+            )
+        } else if isCustomMode {
+            tiles.append(
+                ActionTileModel(
+                    id: "customBuilder",
+                    title: "Builder",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    destination: .customBuilder,
+                    action: appViewModel.presentCustomPatchBuilder
                 )
             )
         }
@@ -505,6 +536,8 @@ public struct RootShellView: View {
             FractalPalettePickerSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
         case .riemannPalettePicker:
             RiemannPalettePickerSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
+        case .customBuilder:
+            CustomPatchBuilderSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
         }
     }
 
@@ -534,6 +567,9 @@ public struct RootShellView: View {
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .riemannPalettePicker:
             RiemannPalettePickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+        case .customBuilder:
+            CustomPatchBuilderSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         }
     }
@@ -596,6 +632,8 @@ public struct RootShellView: View {
         let externalAvailable = sessionViewModel.session.availableDisplayTargets
             .first(where: { $0.id == "external" })?
             .isAvailable ?? false
+        let shouldForceBlackOutput = sessionViewModel.session.activeModeID == .custom
+        let externalBackgroundColor: UIColor = shouldForceBlackOutput ? .black : (isLightGlassAppearance ? .white : .black)
 
         guard externalSelected, externalAvailable else {
             releaseExternalProgramWindow()
@@ -608,6 +646,7 @@ public struct RootShellView: View {
         }
 
         if let externalProgramWindow, externalProgramWindow.screen == externalScreen {
+            externalProgramWindow.backgroundColor = externalBackgroundColor
             externalProgramWindow.isHidden = false
             return
         }
@@ -616,11 +655,15 @@ public struct RootShellView: View {
 
         let window = UIWindow(frame: externalScreen.bounds)
         window.screen = externalScreen
-        window.backgroundColor = .black
+        window.backgroundColor = externalBackgroundColor
         window.rootViewController = UIHostingController(
             rootView: PerformanceSurfaceView(sessionViewModel: sessionViewModel)
                 .ignoresSafeArea()
-                .background(Color.black)
+                .background(
+                    shouldForceBlackOutput
+                        ? Color.black
+                        : (isLightGlassAppearance ? Color.white : Color.black)
+                )
         )
         window.isHidden = false
         externalProgramWindow = window
@@ -1188,12 +1231,6 @@ private struct ActionTileButton: View {
             shape
                 .stroke(strokeColor, lineWidth: 1)
         }
-        .shadow(
-            color: (isLightAppearance ? Color.white : Color.black).opacity(isFullscreenAction ? (isHovered ? 0.34 : 0.26) : (isHovered ? 0.24 : 0.16)),
-            radius: isFullscreenAction ? (isHovered ? 22 : 18) : (isHovered ? 16 : 12),
-            x: 0,
-            y: 6
-        )
         .onAppear {
             guard !reduceMotion else { return }
             symbolEffectToken = UUID()
@@ -1295,7 +1332,6 @@ private struct ActionMasterTile: View {
                 .stroke(isLightAppearance ? Color.black.opacity(0.14) : Color.white.opacity(0.14), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, minHeight: tileBodyHeight + 28, maxHeight: tileBodyHeight + 28, alignment: .topLeading)
-        .shadow(color: (isLightAppearance ? Color.white : Color.black).opacity(0.18), radius: 14, x: 0, y: 6)
         .onChange(of: liveControlDescriptors.map(\.id)) { _, ids in
             if let selectedControlID, !ids.contains(selectedControlID) {
                 self.selectedControlID = nil
@@ -1649,6 +1685,24 @@ private extension View {
     @ViewBuilder
     func chromaGlassTileBackground<S: Shape>(in shape: S, isEmphasized: Bool, isLightAppearance: Bool) -> some View {
         let baseOpacity = isEmphasized ? 0.16 : 0.10
+        // Light theme profile: subtle 40% opacity cut + geometry softening to avoid bloom.
+        let neutralShadowOpacity = isLightAppearance ? (isEmphasized ? 0.072 : 0.060) : (isEmphasized ? 0.20 : 0.16)
+        let blueShadowOpacity = isLightAppearance ? (isEmphasized ? 0.096 : 0.084) : (isEmphasized ? 0.26 : 0.22)
+        let magentaShadowOpacity = isLightAppearance ? (isEmphasized ? 0.084 : 0.072) : (isEmphasized ? 0.22 : 0.18)
+        let neutralShadowRadius: CGFloat = isLightAppearance ? (isEmphasized ? 16.0 : 11.0) : (isEmphasized ? 20.0 : 14.0)
+        let blueShadowRadius: CGFloat = isLightAppearance ? (isEmphasized ? 13.0 : 10.0) : (isEmphasized ? 16.0 : 12.0)
+        let magentaShadowRadius: CGFloat = isLightAppearance ? (isEmphasized ? 12.0 : 9.0) : (isEmphasized ? 14.0 : 10.0)
+        let neutralShadowYOffset: CGFloat = isLightAppearance ? (isEmphasized ? 8.0 : 6.0) : 10.0
+        let blueShadowOffset = isLightAppearance
+            ? CGSize(width: isEmphasized ? -6.0 : -5.0, height: isEmphasized ? 6.0 : 5.0)
+            : CGSize(width: -8.0, height: 8.0)
+        let magentaShadowOffset = isLightAppearance
+            ? CGSize(width: isEmphasized ? 6.0 : 5.0, height: isEmphasized ? 8.0 : 6.0)
+            : CGSize(width: 8.0, height: 10.0)
+        let neutralShadowColor = isLightAppearance ? Color.black : Color.black
+        let blueShadowColor = Color(hue: 0.57, saturation: 0.86, brightness: isLightAppearance ? 0.82 : 0.98)
+        let magentaShadowColor = Color(hue: 0.91, saturation: 0.82, brightness: isLightAppearance ? 0.76 : 0.96)
+
         if #available(iOS 26.0, macCatalyst 26.0, *) {
             self
                 .background(
@@ -1665,6 +1719,24 @@ private extension View {
                         .interactive(),
                     in: shape
                 )
+                .shadow(
+                    color: neutralShadowColor.opacity(neutralShadowOpacity),
+                    radius: neutralShadowRadius,
+                    x: 0,
+                    y: neutralShadowYOffset
+                )
+                .shadow(
+                    color: blueShadowColor.opacity(blueShadowOpacity),
+                    radius: blueShadowRadius,
+                    x: blueShadowOffset.width,
+                    y: blueShadowOffset.height
+                )
+                .shadow(
+                    color: magentaShadowColor.opacity(magentaShadowOpacity),
+                    radius: magentaShadowRadius,
+                    x: magentaShadowOffset.width,
+                    y: magentaShadowOffset.height
+                )
         } else {
             self
                 .background(
@@ -1672,6 +1744,24 @@ private extension View {
                         ? AnyShapeStyle(.ultraThinMaterial)
                         : AnyShapeStyle(.regularMaterial),
                     in: shape
+                )
+                .shadow(
+                    color: neutralShadowColor.opacity(neutralShadowOpacity),
+                    radius: neutralShadowRadius,
+                    x: 0,
+                    y: neutralShadowYOffset
+                )
+                .shadow(
+                    color: blueShadowColor.opacity(blueShadowOpacity),
+                    radius: blueShadowRadius,
+                    x: blueShadowOffset.width,
+                    y: blueShadowOffset.height
+                )
+                .shadow(
+                    color: magentaShadowColor.opacity(magentaShadowOpacity),
+                    radius: magentaShadowRadius,
+                    x: magentaShadowOffset.width,
+                    y: magentaShadowOffset.height
                 )
         }
     }

@@ -108,15 +108,10 @@ public final class DiskPresetService: PresetService {
 
     private func backfillMissingModeSeeds(into presets: [Preset]) -> [Preset] {
         guard !seedPresets.isEmpty else { return presets }
-        var existingModeIDs = Set(presets.map(\.modeID))
-        var additions: [Preset] = []
-        for seed in seedPresets {
-            guard !existingModeIDs.contains(seed.modeID) else { continue }
-            additions.append(seed)
-            existingModeIDs.insert(seed.modeID)
-        }
-        guard !additions.isEmpty else { return presets }
-        return PresetServiceSorting.sorted(presets + additions)
+        let existingIDs = Set(presets.map(\.id))
+        let missing = seedPresets.filter { !existingIDs.contains($0.id) }
+        guard !missing.isEmpty else { return presets }
+        return PresetServiceSorting.sorted(presets + missing)
     }
 
     private static func resolveBaseDirectory(fileManager: FileManager) -> URL {

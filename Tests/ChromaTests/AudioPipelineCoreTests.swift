@@ -4,6 +4,21 @@ import Combine
 
 @MainActor
 final class AudioPipelineCoreTests: XCTestCase {
+    func testRendererSurfaceStateMapperReflectsLightAppearanceStyle() {
+        let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
+        let mapper = RendererSurfaceStateMapper()
+        var session = ChromaSession.initial()
+
+        XCTAssertFalse(
+            mapper.map(session: session, parameterStore: store, latestFeatureFrame: nil).controls.isLightAppearance
+        )
+
+        session.outputState.glassAppearanceStyle = .light
+        XCTAssertTrue(
+            mapper.map(session: session, parameterStore: store, latestFeatureFrame: nil).controls.isLightAppearance
+        )
+    }
+
     func testRendererSurfaceStateMapperAppliesAudioFeatureModulation() {
         let store = ParameterStore(descriptors: ParameterCatalog.descriptors)
         store.setValue(.scalar(0.70), for: "response.inputGain", scope: .global)

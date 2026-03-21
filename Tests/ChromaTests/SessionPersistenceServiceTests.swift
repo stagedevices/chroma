@@ -105,6 +105,74 @@ final class SessionPersistenceServiceTests: XCTestCase {
         ])
     }
 
+    func testPlaceholderCustomPatchServiceSortsAndStabilizesActivePatch() throws {
+        let beta = CustomPatch(
+            id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+            name: "Beta",
+            nodes: [],
+            connections: [],
+            viewport: CustomPatchViewport(zoom: 1.0, offsetX: 0, offsetY: 0),
+            createdAt: Date(timeIntervalSince1970: 20),
+            updatedAt: Date(timeIntervalSince1970: 20)
+        )
+        let alpha = CustomPatch(
+            id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+            name: "Alpha",
+            nodes: [],
+            connections: [],
+            viewport: CustomPatchViewport(zoom: 1.0, offsetX: 0, offsetY: 0),
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        let service = PlaceholderCustomPatchService(
+            library: CustomPatchLibrary(activePatchID: UUID(), patches: [beta, alpha])
+        )
+
+        let loaded = service.loadLibrary()
+        XCTAssertEqual(loaded.patches.map(\.name), ["Alpha", "Beta"])
+        XCTAssertEqual(loaded.activePatchID, alpha.id)
+    }
+
+    func testDiskCustomPatchServiceRoundTripsAcrossInstancesWithDeterministicOrdering() throws {
+        let baseURL = temporaryDirectoryURL()
+        let fileURL = baseURL.appendingPathComponent("custom-patches.json", isDirectory: false)
+
+        let alpha = CustomPatch(
+            id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+            name: "Alpha",
+            nodes: [],
+            connections: [],
+            viewport: CustomPatchViewport(zoom: 1.0, offsetX: 0, offsetY: 0),
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        let beta = CustomPatch(
+            id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+            name: "Beta",
+            nodes: [],
+            connections: [],
+            viewport: CustomPatchViewport(zoom: 1.0, offsetX: 0, offsetY: 0),
+            createdAt: Date(timeIntervalSince1970: 20),
+            updatedAt: Date(timeIntervalSince1970: 20)
+        )
+
+        let writer = DiskCustomPatchService(
+            fileManager: .default,
+            fileURL: fileURL,
+            seedLibrary: CustomPatchLibrary(activePatchID: alpha.id, patches: [alpha])
+        )
+        try writer.saveLibrary(CustomPatchLibrary(activePatchID: beta.id, patches: [beta, alpha]))
+
+        let reader = DiskCustomPatchService(
+            fileManager: .default,
+            fileURL: fileURL,
+            seedLibrary: CustomPatchLibrary(activePatchID: alpha.id, patches: [alpha])
+        )
+        let loaded = reader.loadLibrary()
+        XCTAssertEqual(loaded.patches.map(\.name), ["Alpha", "Beta"])
+        XCTAssertEqual(loaded.activePatchID, beta.id)
+    }
+
     private func temporaryDirectoryURL() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("chroma-tests-\(UUID().uuidString)", isDirectory: true)

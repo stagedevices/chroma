@@ -147,6 +147,25 @@ float wrappedAngleDelta(float a, float b) {
     return atan2(sin(delta), cos(delta));
 }
 
+bool usesLightCanvasAppearance(constant RendererFrameUniforms& uniforms) {
+    return uniforms.padding3 > 0u;
+}
+
+float3 canvasBaseColor(constant RendererFrameUniforms& uniforms) {
+    return usesLightCanvasAppearance(uniforms) ? float3(1.0) : float3(0.0);
+}
+
+float3 applyCanvasAppearance(float3 color, constant RendererFrameUniforms& uniforms) {
+    float3 clamped = clamp(color, float3(0.0), float3(1.0));
+    if (!usesLightCanvasAppearance(uniforms)) {
+        return clamped;
+    }
+
+    float peak = max(clamped.r, max(clamped.g, clamped.b));
+    float lift = 1.0 - peak;
+    return clamp(clamped + lift, float3(0.0), float3(1.0));
+}
+
 float3 spectralPalette(float phase) {
     float3 c0 = float3(0.08, 0.32, 0.98);
     float3 c1 = float3(0.12, 0.90, 0.80);
@@ -378,14 +397,14 @@ fragment float4 renderer_radial_fragment(
 ) {
     if (uniforms.modeIndex == 0u) {
         if (uniforms.colorShiftBlackout > 0u) {
-            return float4(0.0, 0.0, 0.0, 1.0);
+            return float4(canvasBaseColor(uniforms), 1.0);
         }
 
         float hue = fract(uniforms.colorShiftHue);
         float saturation = clamp(uniforms.colorShiftSaturation, 0.0, 1.0);
         float value = 0.86;
         float3 color = hsvToRgb(float3(hue, saturation, value));
-        return float4(color, 1.0);
+        return float4(applyCanvasAppearance(color, uniforms), 1.0);
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
@@ -424,7 +443,7 @@ fragment float4 renderer_radial_fragment(
     color *= vignette;
     color += float3(0.012, 0.012, 0.016);
 
-    return float4(color, 1.0);
+    return float4(applyCanvasAppearance(color, uniforms), 1.0);
 }
 
 fragment float4 renderer_feedback_contour_fragment(
@@ -434,7 +453,7 @@ fragment float4 renderer_feedback_contour_fragment(
     sampler linearSampler [[sampler(0)]]
 ) {
     if (uniforms.colorShiftBlackout > 0u) {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(canvasBaseColor(uniforms), 1.0);
     }
 
     float2 uv = in.uv;
@@ -538,7 +557,7 @@ fragment float4 renderer_feedback_present_fragment(
     float value = smoothstep(0.04, 0.98, field);
     color *= mix(0.28, 1.0, value);
     color = max(color - (uniforms.blackFloor * 0.18), float3(0.0));
-    return float4(color, 1.0);
+    return float4(applyCanvasAppearance(color, uniforms), 1.0);
 }
 
 fragment float4 renderer_spectral_ring_field_fragment(
@@ -688,7 +707,7 @@ fragment float4 renderer_spectral_composite_fragment(
     float vignette = smoothstep(1.42, 0.14, radius);
     composed *= vignette;
 
-    return float4(composed, 1.0);
+    return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
 fragment float4 renderer_attack_particle_field_fragment(
@@ -806,7 +825,7 @@ fragment float4 renderer_attack_composite_fragment(
 
     float vignette = smoothstep(1.42, 0.14, radius);
     composed *= vignette;
-    return float4(composed, 1.0);
+    return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
 fragment float4 renderer_prism_facet_field_fragment(
@@ -814,7 +833,7 @@ fragment float4 renderer_prism_facet_field_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]]
 ) {
     if (uniforms.prismBlackout > 0u) {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(canvasBaseColor(uniforms), 1.0);
     }
 
     float2 uv = in.uv;
@@ -959,7 +978,7 @@ fragment float4 renderer_prism_composite_fragment(
 
     float vignette = smoothstep(1.55, 0.14, radius);
     composed *= vignette;
-    return float4(composed, 1.0);
+    return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
 fragment float4 renderer_tunnel_field_fragment(
@@ -967,7 +986,7 @@ fragment float4 renderer_tunnel_field_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]]
 ) {
     if (uniforms.tunnelBlackout > 0u) {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(canvasBaseColor(uniforms), 1.0);
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
@@ -1135,9 +1154,9 @@ fragment float4 renderer_tunnel_composite_fragment(
     float vignette = smoothstep(1.62, 0.12, squareRadius);
     composed *= vignette;
     if (!isfinite(composed.x) || !isfinite(composed.y) || !isfinite(composed.z)) {
-        return float4(clamp(field, float3(0.0), float3(3.0)), 1.0);
+        return float4(applyCanvasAppearance(clamp(field, float3(0.0), float3(3.0)), uniforms), 1.0);
     }
-    return float4(clamp(composed, float3(0.0), float3(1.8)), 1.0);
+    return float4(applyCanvasAppearance(clamp(composed, float3(0.0), float3(1.8)), uniforms), 1.0);
 }
 
 fragment float4 renderer_fractal_field_fragment(
@@ -1145,7 +1164,7 @@ fragment float4 renderer_fractal_field_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]]
 ) {
     if (uniforms.fractalBlackout > 0u) {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(canvasBaseColor(uniforms), 1.0);
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
@@ -1299,7 +1318,7 @@ fragment float4 renderer_fractal_composite_fragment(
     composed = max(composed - (uniforms.blackFloor * 0.13), float3(0.0));
     float vignette = smoothstep(1.58, 0.10, radius);
     composed *= vignette;
-    return float4(composed, 1.0);
+    return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
 float riemannContourLine(float coordinate, float lineCount, float width) {
@@ -1332,7 +1351,7 @@ fragment float4 renderer_riemann_field_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]]
 ) {
     if (uniforms.riemannBlackout > 0u) {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return float4(canvasBaseColor(uniforms), 1.0);
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
@@ -1559,5 +1578,562 @@ fragment float4 renderer_riemann_composite_fragment(
     composed = max(composed - (uniforms.blackFloor * 0.055), float3(0.0));
     float vignette = smoothstep(1.95, 0.00, radius);
     composed *= mix(1.0, vignette, 0.12);
-    return float4(composed, 1.0);
+    return float4(applyCanvasAppearance(composed, uniforms), 1.0);
+}
+
+// MARK: - Patch Node Compute Kernels
+
+struct PatchNodeUniforms {
+    float time;
+    float param0;
+    float param1;
+    float param2;
+    float param3;
+    float param4;
+    float param5;
+    float input0;
+    float input1;
+    float input2;
+    float input3;
+};
+
+kernel void patch_node_oscillator(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float drive = u.input0;
+    float rate = u.param0;
+    float phase = u.param1;
+    float t = u.time * (0.5 + rate * 2.0) + phase * kPi * 2.0;
+    float cx = sin(t * 1.1) * 0.3;
+    float cy = cos(t * 0.9) * 0.3;
+    float2 p = (uv - 0.5) * 2.0;
+    float d = length(p - float2(cx, cy));
+    float ring = sin(d * (6.0 + drive * 14.0) - t * 3.0);
+    float brightness = (ring * 0.5 + 0.5) * (0.2 + drive * 0.8);
+    float hue = fract(d * 0.4 + t * 0.1);
+    float3 rgb = float3(
+        brightness * (0.6 + 0.4 * sin(hue * kPi * 2.0)),
+        brightness * (0.4 + 0.6 * sin(hue * kPi * 2.0 + kPi * 0.667)),
+        brightness * (0.5 + 0.5 * sin(hue * kPi * 2.0 + kPi * 1.333))
+    );
+    output.write(float4(rgb, 1.0), gid);
+}
+
+kernel void patch_node_blend(
+    texture2d<float, access::read> texA [[texture(0)]],
+    texture2d<float, access::read> texB [[texture(1)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float4 a = texA.read(gid);
+    float4 b = texB.read(gid);
+    float m = u.input2;
+    output.write(mix(a, b, m), gid);
+}
+
+kernel void patch_node_transform(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float4 color = input.read(gid);
+    float amount = u.input1;
+    float brightness = 0.8 + amount * 0.4;
+    output.write(float4(color.rgb * brightness, color.a), gid);
+}
+
+kernel void patch_node_solid(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    output.write(float4(u.input0, u.input1, u.input2, 1.0), gid);
+}
+
+// HSV conversion helpers for patch nodes
+static float3 patchHsvToRgb(float3 hsv) {
+    float h = fract(hsv.x) * 6.0;
+    float s = saturate(hsv.y);
+    float v = saturate(hsv.z);
+    float c = v * s;
+    float x = c * (1.0 - abs(fmod(h, 2.0) - 1.0));
+    float m = v - c;
+    float3 rgb;
+    if (h < 1.0)      rgb = float3(c, x, 0);
+    else if (h < 2.0) rgb = float3(x, c, 0);
+    else if (h < 3.0) rgb = float3(0, c, x);
+    else if (h < 4.0) rgb = float3(0, x, c);
+    else if (h < 5.0) rgb = float3(x, 0, c);
+    else               rgb = float3(c, 0, x);
+    return rgb + m;
+}
+
+static float3 patchRgbToHsv(float3 rgb) {
+    float cMax = max(rgb.r, max(rgb.g, rgb.b));
+    float cMin = min(rgb.r, min(rgb.g, rgb.b));
+    float delta = cMax - cMin;
+    float h = 0;
+    if (delta > 0.00001) {
+        if (cMax == rgb.r)      h = fmod((rgb.g - rgb.b) / delta, 6.0);
+        else if (cMax == rgb.g) h = (rgb.b - rgb.r) / delta + 2.0;
+        else                    h = (rgb.r - rgb.g) / delta + 4.0;
+        h /= 6.0;
+        if (h < 0) h += 1.0;
+    }
+    float s = (cMax > 0.00001) ? delta / cMax : 0;
+    return float3(h, s, cMax);
+}
+
+kernel void patch_node_gradient(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float mode = u.param0;
+    float hueA = u.param1;
+    float hueB = u.param2;
+    float position = u.input0;
+    float spread = max(u.input1, 0.01);
+
+    float t;
+    if (mode < 0.5) {
+        // Linear
+        t = saturate((uv.x - position + spread * 0.5) / spread);
+    } else if (mode < 1.5) {
+        // Radial
+        float d = length(uv - float2(0.5 + position * 0.4, 0.5));
+        t = saturate(d / spread);
+    } else {
+        // Angular
+        float2 p = uv - 0.5;
+        float angle = atan2(p.y, p.x) / (2.0 * kPi) + 0.5 + position;
+        t = fract(angle);
+    }
+
+    float3 colorA = patchHsvToRgb(float3(hueA, 0.85, 0.95));
+    float3 colorB = patchHsvToRgb(float3(hueB, 0.85, 0.95));
+    float3 rgb = mix(colorA, colorB, t);
+    output.write(float4(rgb, 1.0), gid);
+}
+
+kernel void patch_node_oscillator2d(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float scaleX = u.param0;
+    float scaleY = u.param1;
+    float hue = u.param2;
+    float drive = u.input0;
+    float speed = u.input1 + 0.3;
+    float t = u.time * speed;
+
+    float2 p = (uv - 0.5) * 2.0;
+    float v1 = sin(p.x * scaleX + t * 2.1) * cos(p.y * scaleY + t * 1.7);
+    float v2 = sin(p.y * scaleX * 0.8 - t * 1.3) * cos(p.x * scaleY * 1.2 + t * 0.9);
+    float pattern = (v1 + v2) * 0.5;
+    float brightness = (pattern * 0.5 + 0.5) * (0.35 + drive * 0.65);
+
+    float3 rgb = patchHsvToRgb(float3(hue + pattern * 0.08, 0.8, brightness));
+    output.write(float4(rgb, 1.0), gid);
+}
+
+constant uint kPatchMaxParticles = 128;
+
+struct PatchParticle {
+    float2 position;
+    float2 velocity;
+    float age;
+    float lifetime;
+    float size;
+    float brightness;
+};
+
+kernel void patch_node_particles(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    device PatchParticle *particleBuffer [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    uint count = min(uint(u.param2), kPatchMaxParticles);
+    float size = u.param1;
+
+    float3 accum = float3(0.0);
+    for (uint i = 0; i < count; i++) {
+        PatchParticle p = particleBuffer[i];
+        if (p.age >= p.lifetime) continue;
+        float fade = 1.0 - (p.age / p.lifetime);
+        fade = fade * fade;
+        float d = length(uv - p.position);
+        float glow = smoothstep(size, size * 0.1, d) * fade * p.brightness;
+        float hue = fract(float(i) * 0.618 + u.time * 0.05);
+        accum += patchHsvToRgb(float3(hue, 0.7, 1.0)) * glow;
+    }
+    output.write(float4(accum, 1.0), gid);
+}
+
+kernel void patch_node_hsv_adjust(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float4 color = input.read(gid);
+    float3 hsv = patchRgbToHsv(color.rgb);
+    float hueShift = u.param0 + u.input0;
+    float satMul = u.param1 + u.input1;
+    float valMul = u.param2 + u.input2;
+    hsv.x = fract(hsv.x + hueShift);
+    hsv.y = saturate(hsv.y * satMul);
+    hsv.z = saturate(hsv.z * valMul);
+    float3 rgb = patchHsvToRgb(hsv);
+    output.write(float4(rgb, color.a), gid);
+}
+
+kernel void patch_node_transform2d(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float tx = u.param0;
+    float ty = u.param1;
+    float rotation = (u.param2 + u.input0) * kPi * 2.0;
+    float scl = max(u.param3 + u.input1, 0.01);
+
+    float2 p = uv - 0.5;
+    // Scale
+    p /= scl;
+    // Rotate
+    float cs = cos(rotation);
+    float sn = sin(rotation);
+    p = float2(p.x * cs - p.y * sn, p.x * sn + p.y * cs);
+    // Translate
+    p -= float2(tx, ty);
+    p += 0.5;
+
+    float4 color;
+    if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) {
+        color = float4(0, 0, 0, 0);
+    } else {
+        uint2 srcCoord = uint2(uint(p.x * float(w)), uint(p.y * float(h)));
+        srcCoord = clamp(srcCoord, uint2(0), uint2(w - 1, h - 1));
+        color = input.read(srcCoord);
+    }
+    output.write(color, gid);
+}
+
+// MARK: - Phase 5 Patch Node Compute Kernels
+
+kernel void patch_node_fractal(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+
+    float realSeed = u.input0;
+    float imagSeed = u.input1;
+    float zoom = max(u.param1, 0.01);
+    int maxIter = int(u.param0);
+    float colorCycles = u.param2;
+
+    // Julia set: z = z^2 + c, where c is driven by inputs
+    float2 c = float2(
+        -0.7 + realSeed * 0.8,
+        0.27 + imagSeed * 0.6
+    );
+    float2 z = (uv - 0.5) * 2.0 / zoom;
+
+    int iter = 0;
+    float zLen = 0;
+    for (int i = 0; i < maxIter; i++) {
+        float x2 = z.x * z.x - z.y * z.y + c.x;
+        float y2 = 2.0 * z.x * z.y + c.y;
+        z = float2(x2, y2);
+        zLen = dot(z, z);
+        if (zLen > 4.0) break;
+        iter = i + 1;
+    }
+
+    // Smooth iteration count for anti-banding
+    float smoothIter = float(iter);
+    if (iter < maxIter) {
+        smoothIter = float(iter) + 1.0 - log2(log2(max(zLen, 1.0)));
+    }
+    float t = smoothIter / float(maxIter);
+
+    float hue = fract(t * colorCycles + u.time * 0.02);
+    float sat = 0.85;
+    float val = (iter < maxIter) ? (0.4 + t * 0.6) : 0.0;
+    float3 rgb = patchHsvToRgb(float3(hue, sat, val));
+    output.write(float4(rgb, 1.0), gid);
+}
+
+kernel void patch_node_voronoi(
+    texture2d<float, access::write> output [[texture(0)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+
+    float cellCount = max(u.param0, 2.0);
+    float jitter = u.param1;
+    float drive = u.input0;
+    float t = u.time;
+
+    float2 p = uv * cellCount;
+    float2 ip = floor(p);
+    float2 fp = fract(p);
+
+    float minDist = 10.0;
+    float minDist2 = 10.0;
+    float cellID = 0;
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            float2 neighbor = float2(float(i), float(j));
+            float2 cellPos = ip + neighbor;
+            // Deterministic hash for cell center
+            float2 seed = fract(sin(float2(
+                dot(cellPos, float2(127.1, 311.7)),
+                dot(cellPos, float2(269.5, 183.3))
+            )) * 43758.5453);
+            // Animate cell centers with audio drive
+            float2 offset = 0.5 + jitter * (seed - 0.5);
+            offset += float2(sin(t * (0.5 + seed.x) + seed.y * 6.28),
+                             cos(t * (0.5 + seed.y) + seed.x * 6.28)) * drive * 0.3;
+            float d = length(fp - neighbor - offset);
+            if (d < minDist) {
+                minDist2 = minDist;
+                minDist = d;
+                cellID = fract(seed.x * 13.7 + seed.y * 7.3);
+            } else if (d < minDist2) {
+                minDist2 = d;
+            }
+        }
+    }
+
+    float edge = minDist2 - minDist;
+    float hue = fract(cellID + drive * 0.3 + t * 0.03);
+    float val = saturate(0.3 + edge * 2.0 + drive * 0.5);
+    float3 rgb = patchHsvToRgb(float3(hue, 0.8, val));
+    output.write(float4(rgb, 1.0), gid);
+}
+
+kernel void patch_node_feedback(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::read> previous [[texture(1)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float decay = u.param0;
+    float blurAmt = u.param1;
+
+    // Read current input
+    float4 current = input.read(gid);
+
+    // Read previous frame with optional blur (3x3 box filter)
+    float4 prev;
+    if (blurAmt > 0.01) {
+        float4 sum = float4(0);
+        int radius = int(max(blurAmt * 3.0, 1.0));
+        float count = 0;
+        for (int dy = -radius; dy <= radius; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                int2 coord = int2(gid) + int2(dx, dy);
+                if (coord.x >= 0 && coord.x < int(w) && coord.y >= 0 && coord.y < int(h)) {
+                    sum += previous.read(uint2(coord));
+                    count += 1.0;
+                }
+            }
+        }
+        prev = sum / max(count, 1.0);
+    } else {
+        prev = previous.read(gid);
+    }
+
+    // Blend: current over decayed previous
+    float4 result = max(current, prev * decay);
+    output.write(result, gid);
+}
+
+kernel void patch_node_blur(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float radius = max(u.param0 + u.input0 * 10.0, 0.0);
+    int r = int(min(radius, 12.0));
+
+    if (r < 1) {
+        output.write(input.read(gid), gid);
+        return;
+    }
+
+    // Gaussian-approximated box blur
+    float4 sum = float4(0);
+    float totalWeight = 0;
+    float sigma = max(float(r) * 0.5, 0.5);
+    float invSigma2 = 1.0 / (2.0 * sigma * sigma);
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            int2 coord = int2(gid) + int2(dx, dy);
+            if (coord.x >= 0 && coord.x < int(w) && coord.y >= 0 && coord.y < int(h)) {
+                float weight = exp(-(float(dx * dx + dy * dy)) * invSigma2);
+                sum += input.read(uint2(coord)) * weight;
+                totalWeight += weight;
+            }
+        }
+    }
+    output.write(sum / max(totalWeight, 0.001), gid);
+}
+
+kernel void patch_node_displace(
+    texture2d<float, access::read> source [[texture(0)]],
+    texture2d<float, access::read> dispMap [[texture(1)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float amount = u.param0 + u.input0 * 0.5;
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+
+    // Red=x displacement, Green=y displacement (centered at 0.5)
+    float4 disp = dispMap.read(gid);
+    float2 offset = (disp.rg - 0.5) * 2.0 * amount;
+    float2 sampleUV = uv + offset;
+
+    // Clamp to texture bounds
+    uint2 srcCoord = uint2(
+        uint(clamp(sampleUV.x, 0.0, 1.0) * float(w)),
+        uint(clamp(sampleUV.y, 0.0, 1.0) * float(h))
+    );
+    srcCoord = clamp(srcCoord, uint2(0), uint2(w - 1, h - 1));
+    output.write(source.read(srcCoord), gid);
+}
+
+kernel void patch_node_mirror(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float foldCount = max(u.param0, 1.0);
+    float angleParam = u.param1;
+
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float2 centered = uv - 0.5;
+
+    // Convert to polar
+    float angle = atan2(centered.y, centered.x) + angleParam * kPi * 2.0;
+    float radius = length(centered);
+
+    // Kaleidoscope fold
+    float sector = kPi * 2.0 / foldCount;
+    angle = fmod(angle + kPi * 100.0, sector); // ensure positive
+    if (angle > sector * 0.5) {
+        angle = sector - angle; // mirror within sector
+    }
+
+    // Back to cartesian, then to UV
+    float2 folded = float2(cos(angle), sin(angle)) * radius + 0.5;
+
+    uint2 srcCoord = uint2(
+        uint(clamp(folded.x, 0.0, 1.0) * float(w)),
+        uint(clamp(folded.y, 0.0, 1.0) * float(h))
+    );
+    srcCoord = clamp(srcCoord, uint2(0), uint2(w - 1, h - 1));
+    output.write(input.read(srcCoord), gid);
+}
+
+kernel void patch_node_tile(
+    texture2d<float, access::read> input [[texture(0)]],
+    texture2d<float, access::write> output [[texture(1)]],
+    constant PatchNodeUniforms &u [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint w = output.get_width();
+    uint h = output.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float repeatX = max(u.param0 + u.input0 * 4.0, 1.0);
+    float repeatY = max(u.param1 + u.input0 * 4.0, 1.0);
+
+    float2 uv = float2(float(gid.x) / float(w), float(gid.y) / float(h));
+    float2 tiled = fract(uv * float2(repeatX, repeatY));
+
+    uint2 srcCoord = uint2(
+        uint(tiled.x * float(w)),
+        uint(tiled.y * float(h))
+    );
+    srcCoord = clamp(srcCoord, uint2(0), uint2(w - 1, h - 1));
+    output.write(input.read(srcCoord), gid);
+}
+
+fragment float4 patch_output_fragment(
+    VertexOut in [[stage_in]],
+    texture2d<float> outputTex [[texture(0)]],
+    sampler linearSampler [[sampler(0)]]
+) {
+    return outputTex.sample(linearSampler, in.uv);
 }

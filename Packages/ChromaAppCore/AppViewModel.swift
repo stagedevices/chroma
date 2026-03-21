@@ -160,6 +160,11 @@ public final class AppViewModel: ObservableObject {
         router.present(.riemannPalettePicker)
     }
 
+    public func presentCustomPatchBuilder() {
+        registerPerformanceInteraction()
+        router.present(.customBuilder)
+    }
+
     private func showRevealControlTemporarily() {
         guard isPerformanceModeEnabled else { return }
         cancelPendingPerformanceTasks()

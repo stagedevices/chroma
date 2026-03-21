@@ -228,14 +228,14 @@ struct ModePickerHeroPresentation {
 func modePickerHeroPresentationMap() -> [VisualModeID: ModePickerHeroPresentation] {
     [
         .colorShift: ModePickerHeroPresentation(
-            systemImage: "paintpalette.fill",
+            systemImage: "rainbow",
             tagline: "Flat Hue Instrument",
             behaviorTags: ["Tone-Locked", "Directional PWM", "Color Feedback"],
             accentStartHue: 0.56,
             accentEndHue: 0.82
         ),
         .prismField: ModePickerHeroPresentation(
-            systemImage: "diamond.fill",
+            systemImage: "rays",
             tagline: "Refracted Stage Flow",
             behaviorTags: ["Facet Field", "Dispersion", "Attack Shards"],
             accentStartHue: 0.62,
@@ -249,18 +249,25 @@ func modePickerHeroPresentationMap() -> [VisualModeID: ModePickerHeroPresentatio
             accentEndHue: 0.70
         ),
         .fractalCaustics: ModePickerHeroPresentation(
-            systemImage: "sparkles",
+            systemImage: "snowflake",
             tagline: "Orbit-Driven Fractal Field",
             behaviorTags: ["Julia Core", "Pulse Events", "Palette Banks"],
             accentStartHue: 0.74,
             accentEndHue: 0.96
         ),
         .riemannCorridor: ModePickerHeroPresentation(
-            systemImage: "function",
+            systemImage: "infinity",
             tagline: "Classic Mandelbrot Flight",
             behaviorTags: ["Boundary Zoom", "Guided POIs", "Stream Variants"],
             accentStartHue: 0.60,
             accentEndHue: 0.84
+        ),
+        .custom: ModePickerHeroPresentation(
+            systemImage: "point.3.connected.trianglepath.dotted",
+            tagline: "Node Graph Builder",
+            behaviorTags: ["Patch Canvas", "Node Graph", "Live Output"],
+            accentStartHue: 0.10,
+            accentEndHue: 0.32
         ),
     ]
 }
@@ -294,9 +301,8 @@ private struct ModePickerHeroPage: View {
                             .stroke(presentation.accentColor.opacity(0.34), lineWidth: 1)
                     }
                     .frame(width: 164, height: 164)
-
-                heroIcon
                 
+                heroIcon
             }
             .frame(width: 190, height: 190)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -352,19 +358,1133 @@ private struct ModePickerHeroPage: View {
         let icon = Image(systemName: presentation.systemImage)
             .resizable()
             .scaledToFit()
-            .frame(width: 86, height: 86)
-            .padding(.top, 6)
-            .frame(width: 96, height: 96)
+            .frame(width: 82, height: 82)
             .symbolRenderingMode(.palette)
-            .foregroundStyle(.white.opacity(0.96), presentation.accentColor)
+            .foregroundStyle(.white.opacity(0.95), presentation.accentColor)
+            .frame(width: 96, height: 96)
 
-        if reduceMotion || !isSelected {
+        if reduceMotion {
             icon
-        } else if #available(iOS 18.0, macCatalyst 18.0, *) {
-            icon.symbolEffect(.bounce, value: pageMotionToken)
+                .scaleEffect(isSelected ? 1.0 : 0.88)
+                .opacity(isSelected ? 1.0 : 0.76)
         } else {
             icon
+                .symbolEffect(.bounce.byLayer, value: pageMotionToken)
+                .symbolEffect(.breathe, isActive: mode.id == .colorShift && isSelected)
+                .symbolEffect(.rotate, isActive: mode.id == .prismField && isSelected)
+                .symbolEffect(.variableColor.iterative.reversing, isActive: mode.id == .tunnelCels && isSelected)
+                .symbolEffect(.variableColor.cumulative, isActive: mode.id == .fractalCaustics && isSelected)
+                .symbolEffect(.rotate, isActive: mode.id == .riemannCorridor && isSelected)
+                .symbolEffect(.wiggle, isActive: mode.id == .custom && isSelected)
+                .scaleEffect(isSelected ? 1.0 : 0.88)
+                .opacity(isSelected ? 1.0 : 0.68)
+                .animation(.spring(response: 0.36, dampingFraction: 0.76), value: isSelected)
         }
+    }
+}
+
+struct CustomPatchBuilderSheet: View {
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+
+    @State private var renameDraft = ""
+    @State private var selectedNodeID: UUID?
+    @State private var multiSelectedNodeIDs: Set<UUID> = []
+    @State private var showExportShare = false
+    @State private var groupNameDraft = ""
+
+    private var activePatch: CustomPatch? {
+        sessionViewModel.activeCustomPatch
+    }
+
+    private var isLightAppearance: Bool {
+        sessionViewModel.isLightGlassAppearance
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                patchHeader
+                toolStrip
+                builderWorkspace
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 18)
+            .font(ChromaTypography.body)
+            .navigationTitle("CUSTOM BUILDER")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetToolbarCloseButton(action: dismiss)
+                }
+            }
+            .onAppear {
+                syncRenameDraft()
+            }
+            .onChange(of: activePatch?.id) { _, _ in
+                syncRenameDraft()
+                selectedNodeID = nil
+                multiSelectedNodeIDs.removeAll()
+            }
+        }
+    }
+
+    private var patchHeader: some View {
+        HStack(spacing: 10) {
+            Picker(
+                "Patch",
+                selection: Binding<UUID?>(
+                    get: { activePatch?.id },
+                    set: { nextID in
+                        guard let nextID else { return }
+                        sessionViewModel.selectCustomPatch(id: nextID)
+                    }
+                )
+            ) {
+                ForEach(sessionViewModel.customPatches) { patch in
+                    Text(patch.name).tag(Optional(patch.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 170)
+
+            TextField("Patch Name", text: $renameDraft)
+                .textInputAutocapitalization(.words)
+                .disableAutocorrection(true)
+                .onSubmit {
+                    commitRename()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    isLightAppearance ? Color.black.opacity(0.08) : Color.white.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                )
+
+            Button("Rename") {
+                commitRename()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(isLightAppearance ? .black : .white)
+            .foregroundStyle(isLightAppearance ? Color.white : Color.black)
+        }
+        .padding(12)
+        .recorderGlassCardBackground(cornerRadius: 18, isLightAppearance: isLightAppearance)
+    }
+
+    private var toolStrip: some View {
+        HStack(spacing: 6) {
+            // Undo / Redo
+            Button { sessionViewModel.undoPatchEdit() } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .disabled(!sessionViewModel.canUndoPatch)
+
+            Button { sessionViewModel.redoPatchEdit() } label: {
+                Image(systemName: "arrow.uturn.forward")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .disabled(!sessionViewModel.canRedoPatch)
+
+            Divider().frame(height: 18).padding(.horizontal, 4)
+
+            // Copy / Paste
+            Button {
+                var ids = multiSelectedNodeIDs
+                if let sel = selectedNodeID { ids.insert(sel) }
+                sessionViewModel.copyNodesFromActiveCustomPatch(nodeIDs: ids)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .disabled(selectedNodeID == nil && multiSelectedNodeIDs.isEmpty)
+
+            Button {
+                sessionViewModel.pasteNodesIntoActiveCustomPatch()
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .disabled(sessionViewModel.patchClipboard == nil)
+
+            Divider().frame(height: 18).padding(.horizontal, 4)
+
+            // Duplicate patch
+            Button {
+                sessionViewModel.duplicateActiveCustomPatch()
+            } label: {
+                Image(systemName: "plus.square.on.square")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            // Export
+            Button {
+                exportPatchToClipboard()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            // Import
+            Button {
+                importPatchFromClipboard()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Spacer(minLength: 0)
+
+            // Node count
+            if let patch = activePatch {
+                Text("\(patch.nodes.count) NODES")
+                    .font(ChromaTypography.metric.monospacedDigit())
+                    .tracking(0.5)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .recorderGlassCardBackground(cornerRadius: 14, isLightAppearance: isLightAppearance)
+    }
+
+    private var builderWorkspace: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                CustomPatchNodeLibraryRail(
+                    isLightAppearance: isLightAppearance,
+                    onAddNode: addNode
+                )
+                .frame(width: 156)
+
+                CustomPatchGraphCanvas(
+                    patch: activePatch,
+                    isLightAppearance: isLightAppearance,
+                    selectedNodeID: $selectedNodeID,
+                    onMoveNode: { nodeID, position in
+                        sessionViewModel.moveNodeInActiveCustomPatch(nodeID: nodeID, to: position)
+                    },
+                    onConnect: { fromNodeID, fromPort, toNodeID, toPort in
+                        sessionViewModel.addConnectionToActiveCustomPatch(
+                            fromNodeID: fromNodeID, fromPort: fromPort,
+                            toNodeID: toNodeID, toPort: toPort
+                        )
+                    },
+                    onDeleteConnection: { connectionID in
+                        sessionViewModel.removeConnectionFromActiveCustomPatch(connectionID: connectionID)
+                    },
+                    onViewportChange: { viewport in
+                        sessionViewModel.updateViewportInActiveCustomPatch(viewport: viewport)
+                    }
+                )
+
+                inspectorPane
+                .frame(width: 218)
+            }
+
+            VStack(spacing: 10) {
+                CustomPatchGraphCanvas(
+                    patch: activePatch,
+                    isLightAppearance: isLightAppearance,
+                    selectedNodeID: $selectedNodeID,
+                    onMoveNode: { nodeID, position in
+                        sessionViewModel.moveNodeInActiveCustomPatch(nodeID: nodeID, to: position)
+                    },
+                    onConnect: { fromNodeID, fromPort, toNodeID, toPort in
+                        sessionViewModel.addConnectionToActiveCustomPatch(
+                            fromNodeID: fromNodeID, fromPort: fromPort,
+                            toNodeID: toNodeID, toPort: toPort
+                        )
+                    },
+                    onDeleteConnection: { connectionID in
+                        sessionViewModel.removeConnectionFromActiveCustomPatch(connectionID: connectionID)
+                    },
+                    onViewportChange: { viewport in
+                        sessionViewModel.updateViewportInActiveCustomPatch(viewport: viewport)
+                    }
+                )
+
+                HStack(spacing: 10) {
+                    CustomPatchNodeLibraryRail(
+                        isLightAppearance: isLightAppearance,
+                        onAddNode: addNode
+                    )
+                    inspectorPane
+                }
+                .frame(height: 186)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var inspectorPane: some View {
+        CustomPatchInspectorPane(
+            patch: activePatch,
+            selectedNodeID: selectedNodeID,
+            isLightAppearance: isLightAppearance,
+            nodeTimings: sessionViewModel.rendererService.patchNodeTimings,
+            onParameterChange: { nodeID, paramName, value in
+                sessionViewModel.updateNodeParameterInActiveCustomPatch(
+                    nodeID: nodeID, parameterName: paramName, value: value
+                )
+            },
+            onDeleteNode: { nodeID in
+                if selectedNodeID == nodeID { selectedNodeID = nil }
+                sessionViewModel.deleteNodeFromActiveCustomPatch(nodeID: nodeID)
+            },
+            onGroupSelected: { nodeIDs, name in
+                sessionViewModel.groupNodesInActiveCustomPatch(nodeIDs: nodeIDs, name: name)
+            },
+            onUngroup: { groupID in
+                sessionViewModel.ungroupInActiveCustomPatch(groupID: groupID)
+            }
+        )
+    }
+
+    private func addNode(kind: CustomPatchNodeKind) {
+        let viewport = activePatch?.viewport ?? CustomPatchViewport()
+        let position = CustomPatchPoint(
+            x: 300 - viewport.offsetX + Double.random(in: -20...20),
+            y: 200 - viewport.offsetY + Double.random(in: -20...20)
+        )
+        sessionViewModel.addNodeToActiveCustomPatch(kind: kind, at: position)
+    }
+
+    private func exportPatchToClipboard() {
+        guard let data = sessionViewModel.exportActiveCustomPatch(),
+              let json = String(data: data, encoding: .utf8) else { return }
+        #if canImport(UIKit)
+        UIPasteboard.general.string = json
+        #endif
+    }
+
+    private func importPatchFromClipboard() {
+        #if canImport(UIKit)
+        guard let json = UIPasteboard.general.string,
+              let data = json.data(using: .utf8) else { return }
+        _ = sessionViewModel.importCustomPatch(from: data)
+        #endif
+    }
+
+    private func syncRenameDraft() {
+        renameDraft = activePatch?.name ?? ""
+    }
+
+    private func commitRename() {
+        sessionViewModel.renameActiveCustomPatch(renameDraft)
+        syncRenameDraft()
+    }
+}
+
+// MARK: - Node Library Rail
+
+private struct CustomPatchNodeLibraryRail: View {
+    let isLightAppearance: Bool
+    let onAddNode: (CustomPatchNodeKind) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("NODE LIBRARY")
+                    .font(ChromaTypography.overline)
+                    .tracking(1.1)
+                    .foregroundStyle(.secondary)
+
+                ForEach(CustomPatchNodeKind.allCases, id: \.self) { kind in
+                    Button {
+                        onAddNode(kind)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.orange.opacity(0.86))
+                            Text(kind.displayName.uppercased())
+                                .font(ChromaTypography.metric)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            isLightAppearance ? Color.black.opacity(0.07) : Color.white.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+    }
+}
+
+// MARK: - Inspector Pane
+
+private struct CustomPatchInspectorPane: View {
+    let patch: CustomPatch?
+    let selectedNodeID: UUID?
+    let isLightAppearance: Bool
+    let nodeTimings: [UUID: Double]
+    let onParameterChange: (UUID, String, Double) -> Void
+    let onDeleteNode: (UUID) -> Void
+    let onGroupSelected: (Set<UUID>, String) -> Void
+    let onUngroup: (UUID) -> Void
+
+    @State private var groupNameDraft = ""
+
+    private var selectedNode: CustomPatchNode? {
+        guard let patch, let selectedNodeID else { return nil }
+        return patch.nodes.first(where: { $0.id == selectedNodeID })
+    }
+
+    private var selectedNodeGroup: CustomPatchGroup? {
+        guard let patch, let selectedNodeID else { return nil }
+        return patch.groups.first(where: { $0.nodeIDs.contains(selectedNodeID) })
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("INSPECTOR")
+                    .font(ChromaTypography.overline)
+                    .tracking(1.1)
+                    .foregroundStyle(.secondary)
+
+                if let selectedNode, let selectedNodeID {
+                    Text(selectedNode.title.uppercased())
+                        .font(ChromaTypography.sheetRowTitle)
+                    Text(selectedNode.kind.displayName)
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                    inspectorRow("Inputs", "\(selectedNode.inputPorts.count)")
+                    inspectorRow("Outputs", "\(selectedNode.outputPorts.count)")
+
+                    // Performance profiling
+                    if let timing = nodeTimings[selectedNodeID] {
+                        inspectorRow("CPU", String(format: "%.2f ms", timing))
+                    }
+
+                    if !selectedNode.parameters.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        Text("PARAMETERS")
+                            .font(ChromaTypography.overline)
+                            .tracking(1.1)
+                            .foregroundStyle(.secondary)
+
+                        ForEach(selectedNode.parameters, id: \.name) { param in
+                            CustomPatchParameterSlider(
+                                param: param,
+                                isLightAppearance: isLightAppearance,
+                                onChange: { newValue in
+                                    onParameterChange(selectedNodeID, param.name, newValue)
+                                }
+                            )
+                        }
+                    }
+
+                    Divider().padding(.vertical, 2)
+
+                    // Ports reference
+                    if !selectedNode.inputPorts.isEmpty {
+                        Text("IN: \(selectedNode.inputPorts.joined(separator: ", "))")
+                            .font(ChromaTypography.bodySecondary)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !selectedNode.outputPorts.isEmpty {
+                        Text("OUT: \(selectedNode.outputPorts.joined(separator: ", "))")
+                            .font(ChromaTypography.bodySecondary)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    // Group membership
+                    if let group = selectedNodeGroup {
+                        Divider().padding(.vertical, 2)
+                        HStack {
+                            Text("GROUP: \(group.name)")
+                                .font(ChromaTypography.metric)
+                                .tracking(0.5)
+                            Spacer(minLength: 4)
+                            Button {
+                                onUngroup(group.id)
+                            } label: {
+                                Text("Ungroup")
+                                    .font(ChromaTypography.metric)
+                                    .foregroundStyle(.orange)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else {
+                        Divider().padding(.vertical, 2)
+                        HStack(spacing: 6) {
+                            TextField("Group name", text: $groupNameDraft)
+                                .font(ChromaTypography.metric)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(
+                                    isLightAppearance ? Color.black.opacity(0.06) : Color.white.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                )
+                            Button {
+                                let name = groupNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !name.isEmpty else { return }
+                                onGroupSelected([selectedNodeID], name)
+                                groupNameDraft = ""
+                            } label: {
+                                Image(systemName: "rectangle.3.group")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(groupNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+
+                    Divider().padding(.vertical, 2)
+
+                    Button(role: .destructive) {
+                        onDeleteNode(selectedNodeID)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Delete Node")
+                                .font(ChromaTypography.metric)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            Color.red.opacity(isLightAppearance ? 0.12 : 0.18),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red)
+                } else {
+                    Text("Select a node to inspect.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Groups list
+                if let patch, !patch.groups.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    Text("GROUPS")
+                        .font(ChromaTypography.overline)
+                        .tracking(1.1)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(patch.groups) { group in
+                        HStack {
+                            Circle()
+                                .fill(groupColor(index: group.colorIndex))
+                                .frame(width: 8, height: 8)
+                            Text(group.name.uppercased())
+                                .font(ChromaTypography.metric)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text("\(group.nodeIDs.count)")
+                                .font(ChromaTypography.metric.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+    }
+
+    private func groupColor(index: Int) -> Color {
+        let colors: [Color] = [.orange, .blue, .green, .purple, .red, .teal, .pink, .yellow]
+        return colors[index % colors.count].opacity(0.76)
+    }
+
+    private func inspectorRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label.uppercased())
+                .font(ChromaTypography.metric)
+                .tracking(0.6)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(ChromaTypography.metric.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Parameter Slider
+
+private struct CustomPatchParameterSlider: View {
+    let param: PatchNodeParameter
+    let isLightAppearance: Bool
+    let onChange: (Double) -> Void
+
+    @State private var localValue: Double = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(param.displayName.uppercased())
+                    .font(ChromaTypography.metric)
+                    .tracking(0.5)
+                Spacer(minLength: 4)
+                Text(formatValue(localValue))
+                    .font(ChromaTypography.metric.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $localValue, in: param.min...param.max) { editing in
+                if !editing {
+                    onChange(localValue)
+                }
+            }
+            .tint(Color.orange.opacity(0.78))
+            .onChange(of: localValue) { _, newVal in
+                onChange(newVal)
+            }
+        }
+        .onAppear { localValue = param.value }
+        .onChange(of: param.value) { _, newVal in
+            if abs(localValue - newVal) > 0.001 {
+                localValue = newVal
+            }
+        }
+    }
+
+    private func formatValue(_ value: Double) -> String {
+        if param.max - param.min > 10 {
+            return String(format: "%.1f", value)
+        }
+        return String(format: "%.3f", value)
+    }
+}
+
+// MARK: - Graph Canvas
+
+private struct CustomPatchGraphCanvas: View {
+    let patch: CustomPatch?
+    let isLightAppearance: Bool
+    @Binding var selectedNodeID: UUID?
+    let onMoveNode: (UUID, CustomPatchPoint) -> Void
+    let onConnect: (UUID, String, UUID, String) -> Void
+    let onDeleteConnection: (UUID) -> Void
+    let onViewportChange: (CustomPatchViewport) -> Void
+
+    private static let nodeWidth: CGFloat = 150
+    private static let nodeHeight: CGFloat = 86
+    private static let portDotRadius: CGFloat = 7
+
+    @State private var dragOffsets: [UUID: CGSize] = [:]
+    @State private var viewportZoom: CGFloat = 1.0
+    @State private var viewportOffset: CGSize = .zero
+    @State private var pendingPanOffset: CGSize = .zero
+    @State private var pendingMagnification: CGFloat = 1.0
+    @State private var connectionDrag: ConnectionDragState?
+
+    private struct ConnectionDragState {
+        var fromNodeID: UUID
+        var fromPort: String
+        var fromPortType: PatchPortType
+        var startPoint: CGPoint
+        var currentPoint: CGPoint
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let canvasCenter = CGPoint(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
+
+            ZStack {
+                CustomPatchGridBackground(isLightAppearance: isLightAppearance)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                if let patch {
+                    canvasContent(patch: patch, canvasCenter: canvasCenter)
+                } else {
+                    Text("No patch loaded.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(panGesture)
+            .gesture(zoomGesture)
+        }
+        .frame(minHeight: 320)
+        .padding(2)
+        .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: isLightAppearance)
+        .onAppear {
+            if let viewport = patch?.viewport {
+                viewportZoom = CGFloat(viewport.zoom)
+                viewportOffset = CGSize(width: viewport.offsetX, height: viewport.offsetY)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func canvasContent(patch: CustomPatch, canvasCenter: CGPoint) -> some View {
+        let effectiveZoom = viewportZoom * pendingMagnification
+        let effectiveOffset = CGSize(
+            width: viewportOffset.width + pendingPanOffset.width,
+            height: viewportOffset.height + pendingPanOffset.height
+        )
+
+        // Group background rectangles
+        ForEach(patch.groups) { group in
+            let groupNodes = patch.nodes.filter { group.nodeIDs.contains($0.id) }
+            if !groupNodes.isEmpty {
+                let positions = groupNodes.map { node in
+                    nodeCanvasPosition(node: node, canvasCenter: canvasCenter, offset: effectiveOffset, zoom: effectiveZoom)
+                }
+                let minX = positions.map(\.x).min()! - Self.nodeWidth * effectiveZoom * 0.6
+                let maxX = positions.map(\.x).max()! + Self.nodeWidth * effectiveZoom * 0.6
+                let minY = positions.map(\.y).min()! - Self.nodeHeight * effectiveZoom * 0.6
+                let maxY = positions.map(\.y).max()! + Self.nodeHeight * effectiveZoom * 0.6
+                let groupColors: [Color] = [.orange, .blue, .green, .purple, .red, .teal, .pink, .yellow]
+                let color = groupColors[group.colorIndex % groupColors.count]
+
+                RoundedRectangle(cornerRadius: 14 * effectiveZoom, style: .continuous)
+                    .fill(color.opacity(isLightAppearance ? 0.08 : 0.12))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14 * effectiveZoom, style: .continuous)
+                            .stroke(color.opacity(0.30), lineWidth: 1)
+                    }
+                    .frame(width: maxX - minX, height: maxY - minY)
+                    .position(x: (minX + maxX) * 0.5, y: (minY + maxY) * 0.5)
+                    .overlay(alignment: .topLeading) {
+                        Text(group.name.uppercased())
+                            .font(ChromaTypography.metric)
+                            .tracking(0.6)
+                            .foregroundStyle(color.opacity(0.60))
+                            .position(x: minX + 12 * effectiveZoom, y: minY + 10 * effectiveZoom)
+                    }
+                    .allowsHitTesting(false)
+            }
+        }
+
+        // Connection layer (established connections)
+        CustomPatchConnectionLayerInteractive(
+            patch: patch,
+            canvasCenter: canvasCenter,
+            effectiveOffset: effectiveOffset,
+            effectiveZoom: effectiveZoom,
+            nodeWidth: Self.nodeWidth,
+            nodeHeight: Self.nodeHeight,
+            isLightAppearance: isLightAppearance,
+            onDeleteConnection: onDeleteConnection
+        )
+
+        // In-progress connection drag
+        if let drag = connectionDrag {
+            Canvas { context, _ in
+                let from = drag.startPoint
+                let to = drag.currentPoint
+                let deltaX = max(abs(to.x - from.x) * 0.44, 36)
+                let c1 = CGPoint(x: from.x + deltaX, y: from.y)
+                let c2 = CGPoint(x: to.x - deltaX, y: to.y)
+                var path = Path()
+                path.move(to: from)
+                path.addCurve(to: to, control1: c1, control2: c2)
+                context.stroke(
+                    path,
+                    with: .color(Color.orange.opacity(0.72)),
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [6, 4])
+                )
+            }
+            .allowsHitTesting(false)
+        }
+
+        // Node layer
+        ForEach(patch.nodes) { node in
+            let dragOffset = dragOffsets[node.id] ?? .zero
+            let position = nodeCanvasPosition(
+                node: node,
+                canvasCenter: canvasCenter,
+                offset: effectiveOffset,
+                zoom: effectiveZoom
+            )
+            let adjustedPosition = CGPoint(
+                x: position.x + dragOffset.width,
+                y: position.y + dragOffset.height
+            )
+
+            CustomPatchNodeView(
+                node: node,
+                isSelected: selectedNodeID == node.id,
+                nodeWidth: Self.nodeWidth,
+                nodeHeight: Self.nodeHeight,
+                isLightAppearance: isLightAppearance,
+                effectiveZoom: effectiveZoom,
+                onSelect: { selectedNodeID = node.id },
+                onDragChanged: { value in
+                    dragOffsets[node.id] = value.translation
+                },
+                onDragEnded: { value in
+                    dragOffsets[node.id] = nil
+                    let newX = node.position.x + Double(value.translation.width / effectiveZoom)
+                    let newY = node.position.y + Double(value.translation.height / effectiveZoom)
+                    onMoveNode(node.id, CustomPatchPoint(x: newX, y: newY))
+                },
+                onPortDragChanged: { portName, portType, startPt, currentPt in
+                    connectionDrag = ConnectionDragState(
+                        fromNodeID: node.id,
+                        fromPort: portName,
+                        fromPortType: portType,
+                        startPoint: startPt,
+                        currentPoint: currentPt
+                    )
+                },
+                onPortDragEnded: { portName, portType, endLocation in
+                    completeConnectionDrag(
+                        patch: patch,
+                        canvasCenter: canvasCenter,
+                        effectiveOffset: effectiveOffset,
+                        effectiveZoom: effectiveZoom,
+                        endLocation: endLocation
+                    )
+                    connectionDrag = nil
+                }
+            )
+            .position(x: adjustedPosition.x, y: adjustedPosition.y)
+        }
+    }
+
+    private func nodeCanvasPosition(
+        node: CustomPatchNode, canvasCenter: CGPoint,
+        offset: CGSize, zoom: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: canvasCenter.x + (CGFloat(node.position.x) + offset.width) * zoom,
+            y: canvasCenter.y + (CGFloat(node.position.y) + offset.height) * zoom
+        )
+    }
+
+    private func completeConnectionDrag(
+        patch: CustomPatch,
+        canvasCenter: CGPoint,
+        effectiveOffset: CGSize,
+        effectiveZoom: CGFloat,
+        endLocation: CGPoint
+    ) {
+        guard let drag = connectionDrag else { return }
+
+        // Find target node/port under the drop point
+        for node in patch.nodes {
+            guard node.id != drag.fromNodeID else { continue }
+            let pos = nodeCanvasPosition(
+                node: node, canvasCenter: canvasCenter,
+                offset: effectiveOffset, zoom: effectiveZoom
+            )
+            let scaledWidth = Self.nodeWidth * effectiveZoom
+            let scaledHeight = Self.nodeHeight * effectiveZoom
+            let nodeRect = CGRect(
+                x: pos.x - scaledWidth * 0.5,
+                y: pos.y - scaledHeight * 0.5,
+                width: scaledWidth,
+                height: scaledHeight
+            )
+
+            guard nodeRect.contains(endLocation) else { continue }
+
+            // Check if drop is on the input side (left half)
+            let isInputSide = endLocation.x < pos.x
+
+            if isInputSide {
+                // Find compatible input port
+                let inputDescs = node.kind.inputPortDescriptors
+                for inputDesc in inputDescs {
+                    if inputDesc.type == drag.fromPortType {
+                        onConnect(drag.fromNodeID, drag.fromPort, node.id, inputDesc.name)
+                        return
+                    }
+                }
+            } else {
+                // Drop on output side — connect from target output to drag source's input
+                let outputDescs = node.kind.outputPortDescriptors
+                let fromInputDescs = patch.nodes.first(where: { $0.id == drag.fromNodeID })?.kind.inputPortDescriptors ?? []
+                for outputDesc in outputDescs {
+                    for inputDesc in fromInputDescs {
+                        if outputDesc.type == inputDesc.type {
+                            onConnect(node.id, outputDesc.name, drag.fromNodeID, inputDesc.name)
+                            return
+                        }
+                    }
+                }
+            }
+            return
+        }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 5)
+            .onChanged { value in
+                pendingPanOffset = CGSize(
+                    width: value.translation.width / (viewportZoom * pendingMagnification),
+                    height: value.translation.height / (viewportZoom * pendingMagnification)
+                )
+            }
+            .onEnded { value in
+                viewportOffset.width += value.translation.width / (viewportZoom * pendingMagnification)
+                viewportOffset.height += value.translation.height / (viewportZoom * pendingMagnification)
+                pendingPanOffset = .zero
+                commitViewport()
+            }
+    }
+
+    private var zoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                pendingMagnification = value.magnification
+            }
+            .onEnded { value in
+                viewportZoom = max(0.25, min(viewportZoom * value.magnification, 3.0))
+                pendingMagnification = 1.0
+                commitViewport()
+            }
+    }
+
+    private func commitViewport() {
+        onViewportChange(CustomPatchViewport(
+            zoom: Double(viewportZoom),
+            offsetX: Double(viewportOffset.width),
+            offsetY: Double(viewportOffset.height)
+        ))
+    }
+}
+
+// MARK: - Node View
+
+private struct CustomPatchNodeView: View {
+    let node: CustomPatchNode
+    let isSelected: Bool
+    let nodeWidth: CGFloat
+    let nodeHeight: CGFloat
+    let isLightAppearance: Bool
+    let effectiveZoom: CGFloat
+    let onSelect: () -> Void
+    let onDragChanged: (DragGesture.Value) -> Void
+    let onDragEnded: (DragGesture.Value) -> Void
+    let onPortDragChanged: (String, PatchPortType, CGPoint, CGPoint) -> Void
+    let onPortDragEnded: (String, PatchPortType, CGPoint) -> Void
+
+    var body: some View {
+        ZStack {
+            // Node body
+            VStack(alignment: .leading, spacing: 4) {
+                Text(node.title.uppercased())
+                    .font(ChromaTypography.overline)
+                    .tracking(0.8)
+                    .lineLimit(1)
+                Text(node.kind.displayName)
+                    .font(ChromaTypography.bodySecondary)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(node.inputPorts.count) in · \(node.outputPorts.count) out")
+                    .font(ChromaTypography.metric.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .frame(width: nodeWidth, height: nodeHeight, alignment: .topLeading)
+            .background(
+                (isSelected
+                    ? (isLightAppearance ? Color.black.opacity(0.20) : Color.white.opacity(0.22))
+                    : (isLightAppearance ? Color.black.opacity(0.11) : Color.white.opacity(0.14))),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        isSelected
+                            ? Color.orange.opacity(isLightAppearance ? 0.66 : 0.78)
+                            : (isLightAppearance ? Color.black.opacity(0.18) : Color.white.opacity(0.16)),
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onSelect() }
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged(onDragChanged)
+                    .onEnded(onDragEnded)
+            )
+
+            // Input port dots (left edge)
+            let inputDescs = node.kind.inputPortDescriptors
+            if !inputDescs.isEmpty {
+                VStack(spacing: portSpacing(count: inputDescs.count)) {
+                    ForEach(Array(inputDescs.enumerated()), id: \.element.name) { _, desc in
+                        portDot(type: desc.type, isOutput: false)
+                    }
+                }
+                .position(x: 0, y: nodeHeight * 0.5)
+            }
+
+            // Output port dots (right edge)
+            let outputDescs = node.kind.outputPortDescriptors
+            if !outputDescs.isEmpty {
+                VStack(spacing: portSpacing(count: outputDescs.count)) {
+                    ForEach(Array(outputDescs.enumerated()), id: \.element.name) { _, desc in
+                        portDot(type: desc.type, isOutput: true)
+                            .gesture(
+                                DragGesture(coordinateSpace: .global)
+                                    .onChanged { value in
+                                        onPortDragChanged(desc.name, desc.type, value.startLocation, value.location)
+                                    }
+                                    .onEnded { value in
+                                        onPortDragEnded(desc.name, desc.type, value.location)
+                                    }
+                            )
+                    }
+                }
+                .position(x: nodeWidth, y: nodeHeight * 0.5)
+            }
+        }
+        .frame(width: nodeWidth, height: nodeHeight)
+        .scaleEffect(effectiveZoom)
+    }
+
+    private func portDot(type: PatchPortType, isOutput: Bool) -> some View {
+        Circle()
+            .fill(portColor(for: type))
+            .frame(width: 12, height: 12)
+            .overlay {
+                Circle().stroke(
+                    isLightAppearance ? Color.black.opacity(0.26) : Color.white.opacity(0.30),
+                    lineWidth: 1
+                )
+            }
+    }
+
+    private func portColor(for type: PatchPortType) -> Color {
+        switch type {
+        case .signal: return Color.orange.opacity(0.86)
+        case .field: return Color(hue: 0.58, saturation: 0.76, brightness: 0.92)
+        case .trigger: return Color.red.opacity(0.76)
+        case .color: return Color.purple.opacity(0.76)
+        case .vector: return Color.green.opacity(0.76)
+        }
+    }
+
+    private func portSpacing(count: Int) -> CGFloat {
+        count <= 1 ? 0 : max((nodeHeight - 24) / CGFloat(count), 8)
+    }
+}
+
+// MARK: - Interactive Connection Layer
+
+private struct CustomPatchConnectionLayerInteractive: View {
+    let patch: CustomPatch
+    let canvasCenter: CGPoint
+    let effectiveOffset: CGSize
+    let effectiveZoom: CGFloat
+    let nodeWidth: CGFloat
+    let nodeHeight: CGFloat
+    let isLightAppearance: Bool
+    let onDeleteConnection: (UUID) -> Void
+
+    var body: some View {
+        Canvas { context, _ in
+            let nodesByID = Dictionary(uniqueKeysWithValues: patch.nodes.map { ($0.id, $0) })
+            for connection in patch.connections {
+                guard
+                    let fromNode = nodesByID[connection.fromNodeID],
+                    let toNode = nodesByID[connection.toNodeID]
+                else { continue }
+
+                let from = connectionEndpoint(node: fromNode, isOutput: true)
+                let to = connectionEndpoint(node: toNode, isOutput: false)
+                let deltaX = max(abs(to.x - from.x) * 0.44, 36 * effectiveZoom)
+                let c1 = CGPoint(x: from.x + deltaX, y: from.y)
+                let c2 = CGPoint(x: to.x - deltaX, y: to.y)
+                var path = Path()
+                path.move(to: from)
+                path.addCurve(to: to, control1: c1, control2: c2)
+
+                context.stroke(
+                    path,
+                    with: .color(Color.orange.opacity(isLightAppearance ? 0.50 : 0.66)),
+                    lineWidth: 2
+                )
+            }
+        }
+        .allowsHitTesting(false)
+
+        // Tap targets for deleting connections
+        ForEach(patch.connections) { connection in
+            let nodesByID = Dictionary(uniqueKeysWithValues: patch.nodes.map { ($0.id, $0) })
+            if let fromNode = nodesByID[connection.fromNodeID],
+               let toNode = nodesByID[connection.toNodeID] {
+                let from = connectionEndpoint(node: fromNode, isOutput: true)
+                let to = connectionEndpoint(node: toNode, isOutput: false)
+                let midPoint = CGPoint(x: (from.x + to.x) * 0.5, y: (from.y + to.y) * 0.5)
+                Circle()
+                    .fill(Color.clear)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Circle().scale(2))
+                    .position(midPoint)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            onDeleteConnection(connection.id)
+                        } label: {
+                            Label("Remove Connection", systemImage: "trash")
+                        }
+                    }
+            }
+        }
+    }
+
+    private func connectionEndpoint(node: CustomPatchNode, isOutput: Bool) -> CGPoint {
+        let x = canvasCenter.x + (CGFloat(node.position.x) + effectiveOffset.width) * effectiveZoom
+            + (isOutput ? nodeWidth * 0.5 : -nodeWidth * 0.5) * effectiveZoom
+        let y = canvasCenter.y + (CGFloat(node.position.y) + effectiveOffset.height) * effectiveZoom
+        return CGPoint(x: x, y: y)
+    }
+}
+
+// MARK: - Grid Background
+
+private struct CustomPatchGridBackground: View {
+    let isLightAppearance: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let spacing: CGFloat = 28
+            var path = Path()
+            var x: CGFloat = 0
+            while x <= size.width {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+                x += spacing
+            }
+            var y: CGFloat = 0
+            while y <= size.height {
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+                y += spacing
+            }
+            context.stroke(
+                path,
+                with: .color(isLightAppearance ? Color.black.opacity(0.09) : Color.white.opacity(0.10)),
+                lineWidth: 0.9
+            )
+        }
+        .background(
+            LinearGradient(
+                colors: isLightAppearance
+                    ? [Color.white.opacity(0.88), Color(hue: 0.59, saturation: 0.10, brightness: 0.98)]
+                    : [Color.black.opacity(0.92), Color(hue: 0.60, saturation: 0.18, brightness: 0.18)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
 }
 

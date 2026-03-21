@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		96607E792F6E8699001440A1 /* chroma-pro.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 96607E782F6E8699001440A1 /* chroma-pro.storekit */; };
+		96607E7C2F6E88CC001440A1 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96607E7B2F6E88CC001440A1 /* StoreKit.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		9683B6472F6BA2B500F3682F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +29,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		96607E782F6E8699001440A1 /* chroma-pro.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = "chroma-pro.storekit"; sourceTree = "<group>"; };
+		96607E7B2F6E88CC001440A1 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		9683B6342F6BA2B500F3682F /* chroma.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = chroma.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9683B6462F6BA2B500F3682F /* ChromaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChromaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9683B6502F6BA2B500F3682F /* ChromaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChromaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -80,6 +87,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				96607E7C2F6E88CC001440A1 /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,9 +108,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		96607E7A2F6E88CC001440A1 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				96607E7B2F6E88CC001440A1 /* StoreKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		9683B62B2F6BA2B500F3682F = {
 			isa = PBXGroup;
 			children = (
+				96607E782F6E8699001440A1 /* chroma-pro.storekit */,
 				9683B6362F6BA2B500F3682F /* Apps/Chroma-iOS */,
 				A1B2C3012F6C000000000001 /* Packages */,
 				9683B6492F6BA2B500F3682F /* Tests/ChromaTests */,
@@ -110,6 +127,7 @@
 				A1B2C3012F6C000000000002 /* Legacy */,
 				A1B2C3012F6C000000000003 /* docs */,
 				A1B2C3012F6C000000000004 /* tasks */,
+				96607E7A2F6E88CC001440A1 /* Frameworks */,
 				9683B6352F6BA2B500F3682F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -252,6 +270,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				96607E792F6E8699001440A1 /* chroma-pro.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -57,6 +57,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var noImageInSilence: Bool
     public var colorFeedbackEnabled: Bool
     public var colorFeedbackBlackout: Bool
+    public var isLightAppearance: Bool
     public var centerOffset: RendererCenterOffset
 
     public init(
@@ -106,6 +107,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         noImageInSilence: Bool = false,
         colorFeedbackEnabled: Bool = false,
         colorFeedbackBlackout: Bool = false,
+        isLightAppearance: Bool = false,
         centerOffset: RendererCenterOffset = RendererCenterOffset()
     ) {
         self.intensity = intensity
@@ -154,6 +156,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.noImageInSilence = noImageInSilence
         self.colorFeedbackEnabled = colorFeedbackEnabled
         self.colorFeedbackBlackout = colorFeedbackBlackout
+        self.isLightAppearance = isLightAppearance
         self.centerOffset = centerOffset
     }
 
@@ -205,6 +208,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             noImageInSilence: noImageInSilence,
             colorFeedbackEnabled: colorFeedbackEnabled,
             colorFeedbackBlackout: colorFeedbackBlackout,
+            isLightAppearance: isLightAppearance,
             centerOffset: RendererCenterOffset(
                 x: centerOffset.x.clamped(to: -1 ... 1),
                 y: centerOffset.y.clamped(to: -1 ... 1)
@@ -216,10 +220,12 @@ public struct RendererControlState: Codable, Equatable, Sendable {
 public struct RendererSurfaceState: Codable, Equatable, Sendable {
     public var activeModeID: VisualModeID
     public var controls: RendererControlState
+    public var patchProgram: PatchProgram?
 
-    public init(activeModeID: VisualModeID = .colorShift, controls: RendererControlState = RendererControlState()) {
+    public init(activeModeID: VisualModeID = .colorShift, controls: RendererControlState = RendererControlState(), patchProgram: PatchProgram? = nil) {
         self.activeModeID = activeModeID
         self.controls = controls
+        self.patchProgram = patchProgram
     }
 }
 

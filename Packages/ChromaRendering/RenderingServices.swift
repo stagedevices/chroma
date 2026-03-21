@@ -13,6 +13,7 @@ import AppKit
 public protocol RendererService: AnyObject {
     var diagnosticsSummary: RendererDiagnosticsSummary { get }
     var currentSurfaceState: RendererSurfaceState { get }
+    var patchNodeTimings: [UUID: Double] { get }
 
     func configure(view: MTKView)
     func setFrameCaptureSink(_ sink: RendererFrameCaptureSink?)
@@ -49,6 +50,7 @@ public final class DefaultRenderCoordinator: RenderCoordinator {
 public final class HeadlessRendererService: RendererService {
     public private(set) var currentSurfaceState: RendererSurfaceState
     public private(set) var diagnosticsSummary: RendererDiagnosticsSummary
+    public var patchNodeTimings: [UUID: Double] { [:] }
 
     public init(activeModeID: VisualModeID = .colorShift) {
         let state = RendererSurfaceState(activeModeID: activeModeID)
@@ -96,6 +98,7 @@ public final class HeadlessRendererService: RendererService {
 public final class MetalRendererService: RendererService {
     public private(set) var currentSurfaceState: RendererSurfaceState
     public private(set) var diagnosticsSummary: RendererDiagnosticsSummary
+    public var patchNodeTimings: [UUID: Double] { patchExecutor?.nodeTimings ?? [:] }
 
     private let device: MTLDevice?
     private let commandQueue: MTLCommandQueue?
@@ -169,6 +172,7 @@ public final class MetalRendererService: RendererService {
     private var riemannSmoothedSteering = SIMD2<Float>(0, 0)
     private var riemannSmoothedIntensity: Float = 0
     private var activePerformanceMode: RendererPerformanceMode = .auto
+    private var patchExecutor: PatchExecutor?
 
     public init(activeModeID: VisualModeID = .colorShift) {
         device = MTLCreateSystemDefaultDevice()
@@ -198,10 +202,7 @@ public final class MetalRendererService: RendererService {
     public func configure(view: MTKView) {
         guard let device else {
             view.device = nil
-            view.clearColor = MTLClearColorMake(0, 0, 0, 1)
-#if canImport(UIKit)
-            view.backgroundColor = .black
-#endif
+            applyCanvasAppearance(to: view)
             view.isPaused = true
             diagnosticsSummary.readinessStatus = .unavailable
             diagnosticsSummary.statusMessage = "Metal device unavailable"
@@ -210,7 +211,7 @@ public final class MetalRendererService: RendererService {
 
         view.device = device
         view.colorPixelFormat = .bgra8Unorm_srgb
-        view.clearColor = MTLClearColorMake(0, 0, 0, 1)
+        applyCanvasAppearance(to: view)
         view.enableSetNeedsDisplay = false
         view.isPaused = false
         view.preferredFramesPerSecond = 60
@@ -218,9 +219,6 @@ public final class MetalRendererService: RendererService {
         view.autoResizeDrawable = true
         view.isOpaque = true
         view.drawableSize = preferredDrawableSize(for: view)
-#if canImport(UIKit)
-        view.backgroundColor = .black
-#endif
 
         do {
             pipelineStates = try pipelineStateBundle(for: device, drawablePixelFormat: view.colorPixelFormat)
@@ -255,7 +253,7 @@ public final class MetalRendererService: RendererService {
 
     public func update(surfaceState: RendererSurfaceState) {
         let previousMode = currentSurfaceState.activeModeID
-        currentSurfaceState = RendererSurfaceState(activeModeID: surfaceState.activeModeID, controls: surfaceState.controls.clamped())
+        currentSurfaceState = RendererSurfaceState(activeModeID: surfaceState.activeModeID, controls: surfaceState.controls.clamped(), patchProgram: surfaceState.patchProgram)
         diagnosticsSummary.activeModeSummary = currentSurfaceState.activeModeID.displayName
         if previousMode != currentSurfaceState.activeModeID {
             handleModeTransition(from: previousMode, to: currentSurfaceState.activeModeID)
@@ -282,6 +280,7 @@ public final class MetalRendererService: RendererService {
                 view.drawableSize = targetDrawableSize
             }
         }
+        applyCanvasAppearance(to: view)
 
         let drawableWidth = view.drawableSize.width.isFinite ? view.drawableSize.width : 1
         let drawableHeight = view.drawableSize.height.isFinite ? view.drawableSize.height : 1
@@ -388,6 +387,56 @@ public final class MetalRendererService: RendererService {
             hasCameraFeedbackFrame: latestCameraFeedbackFrame != nil,
             radialFallbackActive: radialFallbackActive
         )
+
+        if currentSurfaceState.activeModeID == .custom {
+            if let program = currentSurfaceState.patchProgram, let device {
+                if patchExecutor == nil, let library = try? makeShaderLibrary(device: device) {
+                    patchExecutor = PatchExecutor(device: device, library: library, drawablePixelFormat: view.colorPixelFormat)
+                }
+                if let executor = patchExecutor {
+                    // Pass camera texture for CameraIn nodes
+                    if let frame = latestCameraFeedbackFrame,
+                       let cameraBundle = makeCameraTexture(from: frame) {
+                        executor.updateCameraTexture(cameraBundle.texture)
+                        inFlightCameraTextureRef = cameraBundle.backing
+                    } else {
+                        executor.updateCameraTexture(nil)
+                    }
+                    diagnosticsSummary.statusMessage = "Custom patch: \(program.steps.count) nodes"
+                    guard executor.execute(
+                        program: program,
+                        controls: currentSurfaceState.controls,
+                        commandBuffer: commandBuffer,
+                        renderPassDescriptor: renderPassDescriptor,
+                        drawable: drawable
+                    ) else {
+                        droppedFrameCount += 1
+                        diagnosticsSummary.droppedFrameCount = droppedFrameCount
+                        diagnosticsSummary.statusMessage = "Custom patch encode failed"
+                        return
+                    }
+                    emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
+                    prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
+                    commandBuffer.commit()
+                    return
+                }
+            }
+            diagnosticsSummary.statusMessage = "Custom mode: no compiled patch"
+            guard encodeCustomBlackFramePass(
+                commandBuffer: commandBuffer,
+                renderPassDescriptor: renderPassDescriptor,
+                drawable: drawable
+            ) else {
+                droppedFrameCount += 1
+                diagnosticsSummary.droppedFrameCount = droppedFrameCount
+                diagnosticsSummary.statusMessage = "Custom fallback encode failed"
+                return
+            }
+            emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
+            prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
+            commandBuffer.commit()
+            return
+        }
 
         if selectedPath == .colorFeedback,
            let feedbackPipelines = pipelineStates.colorFeedback,
@@ -956,6 +1005,30 @@ public final class MetalRendererService: RendererService {
             pipelineStates.riemann != nil
     }
 
+    private var canvasClearColor: MTLClearColor {
+        if currentSurfaceState.activeModeID == .custom {
+            return MTLClearColorMake(0, 0, 0, 1)
+        }
+        let base = currentSurfaceState.controls.isLightAppearance ? 1.0 : 0.0
+        return MTLClearColorMake(base, base, base, 1.0)
+    }
+
+#if canImport(UIKit)
+    private var canvasBackgroundColor: UIColor {
+        if currentSurfaceState.activeModeID == .custom {
+            return .black
+        }
+        return currentSurfaceState.controls.isLightAppearance ? UIColor.white : UIColor.black
+    }
+#endif
+
+    private func applyCanvasAppearance(to view: MTKView) {
+        view.clearColor = canvasClearColor
+#if canImport(UIKit)
+        view.backgroundColor = canvasBackgroundColor
+#endif
+    }
+
     private func ensurePipelineStateIfNeeded(device: MTLDevice?, pixelFormat: MTLPixelFormat, now: CFTimeInterval) {
         guard pipelineStates == nil, let device else { return }
 
@@ -1308,7 +1381,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1363,7 +1436,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1426,7 +1499,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let presentEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1502,7 +1575,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1564,7 +1637,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1625,7 +1698,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1686,7 +1759,7 @@ public final class MetalRendererService: RendererService {
 
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
-        drawableRenderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard
             let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawableRenderPassDescriptor)
@@ -1765,7 +1838,7 @@ public final class MetalRendererService: RendererService {
     ) -> Bool {
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].storeAction = .store
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        renderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             return false
@@ -1775,6 +1848,22 @@ public final class MetalRendererService: RendererService {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
+        return true
+    }
+
+    private func encodeCustomBlackFramePass(
+        commandBuffer: MTLCommandBuffer,
+        renderPassDescriptor: MTLRenderPassDescriptor,
+        drawable: CAMetalDrawable
+    ) -> Bool {
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            return false
+        }
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
         return true
     }
 
@@ -2432,15 +2521,24 @@ public final class MetalRendererService: RendererService {
             return
         }
 
-        let pulse = 0.035 + (sin(time * 0.75) * 0.015)
+        let clearColor: MTLClearColor
+        if currentSurfaceState.activeModeID == .custom {
+            clearColor = MTLClearColorMake(0, 0, 0, 1)
+            diagnosticsSummary.statusMessage = "Custom mode: no compiled patch"
+        } else if currentSurfaceState.controls.isLightAppearance {
+            clearColor = canvasClearColor
+        } else {
+            let pulse = 0.035 + (sin(time * 0.75) * 0.015)
+            clearColor = MTLClearColorMake(
+                pulse * 0.45,
+                pulse * 0.60,
+                pulse,
+                1.0
+            )
+        }
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].storeAction = .store
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
-            pulse * 0.45,
-            pulse * 0.60,
-            pulse,
-            1.0
-        )
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColor
 
         if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
             encoder.endEncoding()
@@ -2564,6 +2662,8 @@ public final class MetalRendererService: RendererService {
             return degradeFractalQuality(reason: reason)
         case .riemannCorridor:
             return degradeRiemannQuality(reason: reason)
+        case .custom:
+            return false
         }
     }
 
@@ -2705,7 +2805,8 @@ public final class MetalRendererService: RendererService {
             stablePitchClass: Int32(controls.stablePitchClass ?? -1),
             stablePitchCents: Float(controls.stablePitchCents),
             attackIDLow: attackIDLow,
-            attackIDHigh: attackIDHigh
+            attackIDHigh: attackIDHigh,
+            padding3: controls.isLightAppearance ? 1 : 0
         )
     }
 
@@ -3125,7 +3226,7 @@ public final class MetalRendererService: RendererService {
     private func tuneQualityForDrawableSize(_ size: CGSize, modeID: VisualModeID) {
         let megapixels = (max(size.width, 1) * max(size.height, 1)) / 1_000_000
         switch modeID {
-        case .colorShift, .prismField, .tunnelCels, .fractalCaustics, .riemannCorridor:
+        case .colorShift, .prismField, .tunnelCels, .fractalCaustics, .riemannCorridor, .custom:
             _ = megapixels
             return
         }
@@ -3143,6 +3244,8 @@ public final class MetalRendererService: RendererService {
             return 3
         case .riemannCorridor:
             return 4
+        case .custom:
+            return 5
         }
     }
 }
@@ -4326,6 +4429,10 @@ public func rendererPassSelection(
     radialFallbackActive: Bool
 ) -> RendererPassSelection {
     if radialFallbackActive {
+        return .radial
+    }
+
+    if modeID == .custom {
         return .radial
     }
 

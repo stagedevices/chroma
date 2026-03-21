@@ -100,4 +100,41 @@ final class DomainSerializationTests: XCTestCase {
         XCTAssertTrue(decoded.sessionRecoverySettings.autoSaveEnabled)
         XCTAssertTrue(decoded.sessionRecoverySettings.restoreOnLaunchEnabled)
     }
+
+    func testCustomPatchLibraryRoundTripsThroughCodable() throws {
+        let library = CustomPatchLibrary.seededDefault()
+        let data = try JSONEncoder().encode(library)
+        let decoded = try JSONDecoder().decode(CustomPatchLibrary.self, from: data)
+        XCTAssertEqual(decoded, library)
+        XCTAssertEqual(decoded.patches.count, 3)
+        XCTAssertEqual(decoded.activePatchID, library.activePatchID)
+    }
+
+    func testCustomPatchLibraryDecodesWithoutExplicitActivePatchID() throws {
+        let json = """
+        {
+          "patches": [
+            {
+              "id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+              "name": "Legacy Patch",
+              "nodes": [],
+              "connections": [],
+              "viewport": {
+                "zoom": 1,
+                "offsetX": 0,
+                "offsetY": 0
+              },
+              "createdAt": "2026-01-01T00:00:00Z",
+              "updatedAt": "2026-01-01T00:00:00Z"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(CustomPatchLibrary.self, from: json)
+        XCTAssertNil(decoded.activePatchID)
+        XCTAssertEqual(decoded.patches.count, 1)
+        XCTAssertEqual(decoded.patches[0].name, "Legacy Patch")
+    }
 }

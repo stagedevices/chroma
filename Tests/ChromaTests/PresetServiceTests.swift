@@ -77,15 +77,17 @@ final class PresetServiceTests: XCTestCase {
             Preset(name: "Tunnel Drive", modeID: .tunnelCels, values: []),
             Preset(name: "Fractal Aurora", modeID: .fractalCaustics, values: []),
             Preset(name: "Mandelbrot Boundary Run", modeID: .riemannCorridor, values: []),
+            Preset(name: "Custom Scaffold", modeID: .custom, values: []),
         ]
         let reader = DiskPresetService(fileURL: fileURL, seedPresets: seeds)
         let firstLoad = reader.loadPresets()
-        XCTAssertEqual(firstLoad.count, 5)
+        // ID-based backfill: existing preset kept + all 6 seeds injected (different IDs)
+        XCTAssertEqual(firstLoad.count, 7)
         XCTAssertEqual(Set(firstLoad.map(\.modeID)), Set(VisualModeID.allCases))
         XCTAssertTrue(firstLoad.contains(where: { $0.id == existing.id }))
 
         let secondLoad = reader.loadPresets()
-        XCTAssertEqual(secondLoad.count, 5)
+        XCTAssertEqual(secondLoad.count, 7)
         XCTAssertEqual(Set(secondLoad.map(\.modeID)), Set(VisualModeID.allCases))
     }
 

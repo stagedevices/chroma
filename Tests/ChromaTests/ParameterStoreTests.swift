@@ -82,6 +82,8 @@ final class ParameterStoreTests: XCTestCase {
         let fractalSurface = ParameterCatalog.surfaceControlParameterIDs(for: .fractalCaustics)
         let riemannQuick = ParameterCatalog.quickControlParameterIDs(for: .riemannCorridor)
         let riemannSurface = ParameterCatalog.surfaceControlParameterIDs(for: .riemannCorridor)
+        let customQuick = ParameterCatalog.quickControlParameterIDs(for: .custom)
+        let customSurface = ParameterCatalog.surfaceControlParameterIDs(for: .custom)
 
         XCTAssertFalse(colorShiftQuick.contains("output.blackFloor"))
         XCTAssertFalse(colorShiftSurface.contains("output.blackFloor"))
@@ -123,6 +125,8 @@ final class ParameterStoreTests: XCTestCase {
         XCTAssertTrue(riemannSurface.contains("output.blackFloor"))
         XCTAssertFalse(riemannQuick.contains("mode.riemannCorridor.paletteVariant"))
         XCTAssertFalse(riemannSurface.contains("mode.riemannCorridor.paletteVariant"))
+        XCTAssertTrue(customQuick.isEmpty)
+        XCTAssertTrue(customSurface.isEmpty)
     }
 
     func testPrismFieldParameterDescriptorsAreStable() {
@@ -258,5 +262,15 @@ final class ParameterStoreTests: XCTestCase {
         let modeDescriptor = ParameterCatalog.modes.first { $0.id == .riemannCorridor }
         XCTAssertNotNil(modeDescriptor)
         XCTAssertEqual(modeDescriptor?.name, "Mandelbrot")
+    }
+
+    func testCustomModeKeepsStableIdentifierAndDescriptor() {
+        XCTAssertEqual(VisualModeID.custom.rawValue, "custom")
+        XCTAssertEqual(VisualModeID.custom.displayName, "Custom")
+
+        let modeDescriptor = ParameterCatalog.modes.first { $0.id == .custom }
+        XCTAssertNotNil(modeDescriptor)
+        XCTAssertEqual(modeDescriptor?.name, "Custom")
+        XCTAssertFalse(modeDescriptor?.supportsMorphing ?? true)
     }
 }

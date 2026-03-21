@@ -181,6 +181,9 @@ public struct RendererSurfaceStateMapper {
         case .riemannCorridor:
             scale = riemannDetail
             motion = riemannFlowRate
+        case .custom:
+            scale = 0
+            motion = 0
         }
 
         // Task 003 bridge: live features can gently modulate manual controls.
@@ -262,6 +265,7 @@ public struct RendererSurfaceStateMapper {
                 noImageInSilence: noImageInSilence,
                 colorFeedbackEnabled: colorFeedbackEnabled,
                 colorFeedbackBlackout: colorFeedbackBlackout,
+                isLightAppearance: session.outputState.glassAppearanceStyle == .light,
                 centerOffset: centerOffset
             ).clamped()
         )

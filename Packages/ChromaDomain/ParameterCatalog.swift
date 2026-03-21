@@ -32,6 +32,12 @@ public enum ParameterCatalog {
             summary: "Mandelbrot flight map with contour layers and attack traces.",
             supportsMorphing: true
         ),
+        VisualModeDescriptor(
+            id: .custom,
+            name: VisualModeID.custom.displayName,
+            summary: "Node-based custom graph builder scaffold for future executable chains.",
+            supportsMorphing: false
+        ),
     ]
 
     public static let descriptors: [ParameterDescriptor] = [
@@ -381,6 +387,8 @@ public enum ParameterCatalog {
                 "mode.riemannCorridor.zeroBloom",
                 "output.blackFloor",
             ]
+        case .custom:
+            return []
         }
     }
 
@@ -428,6 +436,8 @@ public enum ParameterCatalog {
                 "mode.riemannCorridor.zeroBloom",
                 "output.blackFloor",
             ]
+        case .custom:
+            return []
         }
     }
 }

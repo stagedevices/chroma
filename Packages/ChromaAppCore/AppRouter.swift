@@ -10,6 +10,7 @@ public enum AppSheetDestination: String, Identifiable {
     case tunnelVariantPicker
     case fractalPalettePicker
     case riemannPalettePicker
+    case customBuilder
 
     public var id: String { rawValue }
 }
@@ -26,7 +27,7 @@ public enum AppSheetPresentationStyle: Equatable, Sendable {
 
 public func appSheetPresentationStyle(for destination: AppSheetDestination) -> AppSheetPresentationStyle {
     switch destination {
-    case .modePicker, .presetBrowser, .recorderExport, .settingsDiagnostics:
+    case .modePicker, .presetBrowser, .recorderExport, .settingsDiagnostics, .customBuilder:
         return .sheet
     case .feedbackSetup, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
         return .popover
@@ -35,7 +36,7 @@ public func appSheetPresentationStyle(for destination: AppSheetDestination) -> A
 
 public func appSheetDetentStyle(for destination: AppSheetDestination) -> AppSheetDetentStyle {
     switch destination {
-    case .settingsDiagnostics:
+    case .settingsDiagnostics, .customBuilder:
         return .mediumAndLarge
     case .modePicker, .presetBrowser, .feedbackSetup, .recorderExport, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
         return .mediumOnly

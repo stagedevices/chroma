@@ -1992,4 +1992,20 @@ final class RendererStateTests: XCTestCase {
 
         XCTAssertEqual(selection, .colorFeedback)
     }
+
+    func testRendererPassSelectionKeepsCustomOnFallbackPath() {
+        let selection = rendererPassSelection(
+            modeID: .custom,
+            colorFeedbackEnabled: true,
+            hasColorFeedbackPipeline: true,
+            hasPrismPipeline: true,
+            hasTunnelPipeline: true,
+            hasFractalPipeline: true,
+            hasRiemannPipeline: true,
+            hasCameraFeedbackFrame: true,
+            radialFallbackActive: false
+        )
+
+        XCTAssertEqual(selection, .radial)
+    }
 }

@@ -14,6 +14,9 @@ final class AppStateTests: XCTestCase {
         router.present(.riemannPalettePicker)
         XCTAssertEqual(router.presentedSheet, .riemannPalettePicker)
 
+        router.present(.customBuilder)
+        XCTAssertEqual(router.presentedSheet, .customBuilder)
+
         router.dismiss()
         XCTAssertNil(router.presentedSheet)
     }
@@ -27,6 +30,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(appSheetDetentStyle(for: .tunnelVariantPicker), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .fractalPalettePicker), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .riemannPalettePicker), .mediumOnly)
+        XCTAssertEqual(appSheetDetentStyle(for: .customBuilder), .mediumAndLarge)
     }
 
     func testSheetPresentationStyleMatchesDestinationContract() {
@@ -34,6 +38,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(appSheetPresentationStyle(for: .presetBrowser), .sheet)
         XCTAssertEqual(appSheetPresentationStyle(for: .recorderExport), .sheet)
         XCTAssertEqual(appSheetPresentationStyle(for: .settingsDiagnostics), .sheet)
+        XCTAssertEqual(appSheetPresentationStyle(for: .customBuilder), .sheet)
 
         XCTAssertEqual(appSheetPresentationStyle(for: .feedbackSetup), .popover)
         XCTAssertEqual(appSheetPresentationStyle(for: .tunnelVariantPicker), .popover)
@@ -157,6 +162,9 @@ final class AppStateTests: XCTestCase {
 
         appViewModel.presentRiemannPalettePicker()
         XCTAssertEqual(router.presentedSheet, .riemannPalettePicker)
+
+        appViewModel.presentCustomPatchBuilder()
+        XCTAssertEqual(router.presentedSheet, .customBuilder)
     }
 
     func testSessionTransitionsModeAndPreset() {
@@ -179,21 +187,43 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(sessionViewModel.parameterStore.value(for: "response.inputGain", scope: .global), .scalar(0.9))
     }
 
+    func testCustomPatchSelectionAndRenameIntentsUpdateActivePatch() {
+        let bootstrap = ChromaAppBootstrap.makeTesting()
+        let sessionViewModel = bootstrap.sessionViewModel
+
+        sessionViewModel.selectMode(.custom)
+        XCTAssertTrue(sessionViewModel.showsCustomBuilderAction)
+
+        guard let activePatch = sessionViewModel.activeCustomPatch else {
+            return XCTFail("Expected seeded custom patch")
+        }
+        let updatedName = "Venue Chain A"
+        sessionViewModel.renameActiveCustomPatch(updatedName)
+        XCTAssertEqual(sessionViewModel.activeCustomPatch?.name, updatedName)
+        XCTAssertEqual(sessionViewModel.customPatchLibrary.activePatchID, activePatch.id)
+
+        sessionViewModel.selectCustomPatch(id: activePatch.id)
+        XCTAssertEqual(sessionViewModel.customPatchLibrary.activePatchID, activePatch.id)
+    }
+
     func testGlassAppearanceToggleUpdatesSessionState() {
         let bootstrap = ChromaAppBootstrap.makeTesting()
         let sessionViewModel = bootstrap.sessionViewModel
 
         let initialToken = sessionViewModel.appearanceTransitionToken
         XCTAssertFalse(sessionViewModel.isLightGlassAppearance)
+        XCTAssertFalse(sessionViewModel.rendererSurfaceState.controls.isLightAppearance)
 
         sessionViewModel.toggleGlassAppearanceStyle()
         XCTAssertTrue(sessionViewModel.isLightGlassAppearance)
         XCTAssertEqual(sessionViewModel.session.outputState.glassAppearanceStyle, .light)
+        XCTAssertTrue(sessionViewModel.rendererSurfaceState.controls.isLightAppearance)
         XCTAssertNotEqual(sessionViewModel.appearanceTransitionToken, initialToken)
 
         sessionViewModel.setGlassAppearanceStyle(.dark)
         XCTAssertFalse(sessionViewModel.isLightGlassAppearance)
         XCTAssertEqual(sessionViewModel.session.outputState.glassAppearanceStyle, .dark)
+        XCTAssertFalse(sessionViewModel.rendererSurfaceState.controls.isLightAppearance)
     }
 
     func testPresetsForActiveModeFiltersByModeID() {

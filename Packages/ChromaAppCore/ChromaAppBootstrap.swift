@@ -86,6 +86,14 @@ public struct ChromaAppBootstrap {
 #endif
             return DiskSessionRecoveryService()
         }()
+        let customPatchService: CustomPatchService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderCustomPatchService()
+            }
+#endif
+            return DiskCustomPatchService()
+        }()
         let recorderService: RecorderService = {
 #if DEBUG
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
@@ -124,6 +132,7 @@ public struct ChromaAppBootstrap {
             presetService: presetService,
             modeDefaultsService: modeDefaultsService,
             sessionRecoveryService: sessionRecoveryService,
+            customPatchService: customPatchService,
             recorderService: recorderService,
             diagnosticsService: diagnosticsService,
             externalDisplayCoordinator: externalDisplayCoordinator,
@@ -142,6 +151,9 @@ public struct ChromaAppBootstrap {
             tunnelDriveSeedPreset,
             fractalAuroraSeedPreset,
             mandelbrotBoundarySeedPreset,
+            customBreathingFractalSeedPreset,
+            customParticleNebulaSeedPreset,
+            customCrystalLatticeSeedPreset,
         ]
     }
 
@@ -222,6 +234,36 @@ public struct ChromaAppBootstrap {
                 ScopedParameterValue(parameterID: "mode.riemannCorridor.zeroBloom", scope: .mode(.riemannCorridor), value: .scalar(0.36)),
                 ScopedParameterValue(parameterID: "mode.riemannCorridor.paletteVariant", scope: .mode(.riemannCorridor), value: .scalar(4.0)),
             ]
+        )
+    }
+
+    private static var customBreathingFractalSeedPreset: Preset {
+        Preset(
+            id: UUID(uuidString: "FB000001-0001-0001-0001-FFFFFFFFFFFF")!,
+            name: "Breathing Fractal",
+            modeID: .custom,
+            values: [],
+            customPatchID: UUID(uuidString: "FA000001-0001-0001-0001-FFFFFFFFFFFF")!
+        )
+    }
+
+    private static var customParticleNebulaSeedPreset: Preset {
+        Preset(
+            id: UUID(uuidString: "FB000002-0002-0002-0002-FFFFFFFFFFFF")!,
+            name: "Particle Nebula",
+            modeID: .custom,
+            values: [],
+            customPatchID: UUID(uuidString: "FA000002-0002-0002-0002-FFFFFFFFFFFF")!
+        )
+    }
+
+    private static var customCrystalLatticeSeedPreset: Preset {
+        Preset(
+            id: UUID(uuidString: "FB000003-0003-0003-0003-FFFFFFFFFFFF")!,
+            name: "Crystal Lattice",
+            modeID: .custom,
+            values: [],
+            customPatchID: UUID(uuidString: "FA000003-0003-0003-0003-FFFFFFFFFFFF")!
         )
     }
 }

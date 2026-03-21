@@ -6,6 +6,7 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
     case tunnelCels
     case fractalCaustics
     case riemannCorridor
+    case custom
 
     public var id: String { rawValue }
 
@@ -21,6 +22,8 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             return "Fractal Caustics"
         case .riemannCorridor:
             return "Mandelbrot"
+        case .custom:
+            return "Custom"
         }
     }
     
@@ -36,6 +39,8 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             return "Orbit-trap Julia caustics with attack pulses."
         case .riemannCorridor:
             return "Audio-flown Mandelbrot traversal with contour-rich domain coloring."
+        case .custom:
+            return "Patch-style graph builder scaffold for custom chain authoring."
         }
     }
 
@@ -54,6 +59,8 @@ public enum VisualModeID: String, CaseIterable, Codable, Identifiable, Sendable 
             self = .fractalCaustics
         case Self.riemannCorridor.rawValue:
             self = .riemannCorridor
+        case Self.custom.rawValue:
+            self = .custom
         case "spectralBloom", "attackParticleHalo", "monochromePulse":
             self = .colorShift
         default:

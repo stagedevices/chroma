@@ -18,6 +18,7 @@ public final class SessionViewModel: ObservableObject {
     @Published public private(set) var session: ChromaSession
     @Published public private(set) var availableModes: [VisualModeDescriptor]
     @Published public private(set) var presets: [Preset]
+    @Published public private(set) var customPatchLibrary: CustomPatchLibrary
     @Published public private(set) var diagnosticsSnapshot: DiagnosticsSnapshot
     @Published public private(set) var supportedExportCodecs: Set<ExportVideoCodec>
     @Published public private(set) var performanceSets: [PerformanceSet]
@@ -50,6 +51,7 @@ public final class SessionViewModel: ObservableObject {
     public let presetService: PresetService
     public let modeDefaultsService: ModeDefaultsService
     public let sessionRecoveryService: SessionRecoveryService
+    public let customPatchService: CustomPatchService
     public let recorderService: RecorderService
     public let diagnosticsService: DiagnosticsService
     public let externalDisplayCoordinator: ExternalDisplayCoordinator
@@ -64,6 +66,12 @@ public final class SessionViewModel: ObservableObject {
     private var activePresetBaselineModeID: VisualModeID?
     private var autosaveTask: Task<Void, Never>?
     private var performanceModeOverride: PerformanceMode?
+    private var patchUndoStack: [CustomPatch] = []
+    private var patchRedoStack: [CustomPatch] = []
+    private static let maxUndoDepth = 40
+    @Published public private(set) var patchClipboard: CustomPatchClipboard?
+    @Published public private(set) var canUndoPatch: Bool = false
+    @Published public private(set) var canRedoPatch: Bool = false
 
     public init(
         session: ChromaSession,
@@ -77,6 +85,7 @@ public final class SessionViewModel: ObservableObject {
         presetService: PresetService,
         modeDefaultsService: ModeDefaultsService,
         sessionRecoveryService: SessionRecoveryService,
+        customPatchService: CustomPatchService,
         recorderService: RecorderService,
         diagnosticsService: DiagnosticsService,
         externalDisplayCoordinator: ExternalDisplayCoordinator,
@@ -97,11 +106,47 @@ public final class SessionViewModel: ObservableObject {
         self.presetService = presetService
         self.modeDefaultsService = modeDefaultsService
         self.sessionRecoveryService = sessionRecoveryService
+        self.customPatchService = customPatchService
         self.recorderService = recorderService
         self.diagnosticsService = diagnosticsService
         self.externalDisplayCoordinator = externalDisplayCoordinator
         self.setlistService = setlistService
         self.presets = presets
+
+        // Remove stale custom mode presets that predate the customPatchID linkage
+        let staleCustomPresetIDs = presets
+            .filter { $0.modeID == .custom && $0.customPatchID == nil }
+            .map(\.id)
+        if !staleCustomPresetIDs.isEmpty {
+            for staleID in staleCustomPresetIDs {
+                try? presetService.deletePreset(id: staleID)
+            }
+            self.presets = presetService.loadPresets()
+        }
+
+        var loadedCustomPatchLibrary = customPatchService.loadLibrary()
+        if loadedCustomPatchLibrary.patches.isEmpty {
+            loadedCustomPatchLibrary = .seededDefault()
+            try? customPatchService.saveLibrary(loadedCustomPatchLibrary)
+        } else {
+            // Remove legacy scaffold and replace factory presets with current versions
+            let scaffoldID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+            let wasScaffoldActive = loadedCustomPatchLibrary.activePatchID == scaffoldID
+            loadedCustomPatchLibrary.patches.removeAll { $0.id == scaffoldID }
+
+            let factoryPatches = CustomPatch.factoryPresets()
+            let factoryIDs = Set(factoryPatches.map(\.id))
+
+            // Remove old versions of factory presets, then add current versions
+            loadedCustomPatchLibrary.patches.removeAll { factoryIDs.contains($0.id) }
+            loadedCustomPatchLibrary.patches.append(contentsOf: factoryPatches)
+
+            if wasScaffoldActive || loadedCustomPatchLibrary.activePatchID == nil {
+                loadedCustomPatchLibrary.activePatchID = factoryPatches.first?.id
+            }
+            try? customPatchService.saveLibrary(loadedCustomPatchLibrary)
+        }
+        self.customPatchLibrary = loadedCustomPatchLibrary
         self.supportedExportCodecs = recorderService.supportedVideoCodecs
         self.performanceSets = performanceSets
         self.latestAudioMeterFrame = audioInputService.latestMeterFrame
@@ -209,6 +254,17 @@ public final class SessionViewModel: ObservableObject {
         presets.filter { $0.modeID == session.activeModeID }
     }
 
+    public var customPatches: [CustomPatch] {
+        customPatchLibrary.patches
+    }
+
+    public var activeCustomPatch: CustomPatch? {
+        guard let activePatchID = customPatchLibrary.activePatchID else {
+            return customPatchLibrary.patches.first
+        }
+        return customPatchLibrary.patches.first(where: { $0.id == activePatchID }) ?? customPatchLibrary.patches.first
+    }
+
     public var activePresetDisplayName: String {
         guard isActivePresetModified, session.activePresetID != nil else {
             return session.activePresetName
@@ -217,12 +273,17 @@ public final class SessionViewModel: ObservableObject {
     }
 
     public var rendererSurfaceState: RendererSurfaceState {
-        surfaceStateMapper.map(
+        var state = surfaceStateMapper.map(
             session: session,
             parameterStore: parameterStore,
             latestFeatureFrame: latestAudioFeatureFrame.timestamp == .distantPast ? nil : latestAudioFeatureFrame,
             performanceModeOverride: effectivePerformanceMode
         )
+        if session.activeModeID == .custom, let patch = activeCustomPatch {
+            let result = PatchCompiler.compile(patch)
+            state.patchProgram = result.program
+        }
+        return state
     }
 
     public var showsColorFeedbackAction: Bool {
@@ -239,6 +300,10 @@ public final class SessionViewModel: ObservableObject {
 
     public var showsRiemannPaletteAction: Bool {
         session.activeModeID == .riemannCorridor
+    }
+
+    public var showsCustomBuilderAction: Bool {
+        session.activeModeID == .custom
     }
 
     public var tunnelVariantLabel: String {
@@ -350,6 +415,9 @@ public final class SessionViewModel: ObservableObject {
         capturePresetBaseline(modeID: preset.modeID)
         if preset.modeID != .colorShift {
             stopColorFeedbackCapture()
+        }
+        if preset.modeID == .custom, let patchID = preset.customPatchID {
+            selectCustomPatch(id: patchID)
         }
         syncRendererState()
         scheduleSessionAutosave()
@@ -480,6 +548,258 @@ public final class SessionViewModel: ObservableObject {
         syncPresetDirtyState()
         syncRendererState()
         scheduleSessionAutosave()
+    }
+
+    public func selectCustomPatch(id: UUID) {
+        guard customPatchLibrary.patches.contains(where: { $0.id == id }) else { return }
+        guard customPatchLibrary.activePatchID != id else { return }
+        customPatchLibrary.activePatchID = id
+        persistCustomPatchLibrary()
+    }
+
+    public func renameActiveCustomPatch(_ newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard var activePatch = activeCustomPatch else { return }
+        guard activePatch.name != trimmed else { return }
+
+        activePatch.name = trimmed
+        activePatch.updatedAt = .now
+        guard let patchIndex = customPatchLibrary.patches.firstIndex(where: { $0.id == activePatch.id }) else { return }
+        customPatchLibrary.patches[patchIndex] = activePatch
+        customPatchLibrary.activePatchID = activePatch.id
+        persistCustomPatchLibrary()
+    }
+
+    public func addNodeToActiveCustomPatch(kind: CustomPatchNodeKind, at position: CustomPatchPoint) {
+        guard var patch = activeCustomPatch else { return }
+        let existingCount = patch.nodes.filter { $0.kind == kind }.count
+        let title = existingCount == 0 ? kind.displayName : "\(kind.displayName) \(existingCount + 1)"
+        let node = CustomPatchNode(kind: kind, title: title, position: position)
+        patch.nodes.append(node)
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func deleteNodeFromActiveCustomPatch(nodeID: UUID) {
+        guard var patch = activeCustomPatch else { return }
+        patch.nodes.removeAll(where: { $0.id == nodeID })
+        patch.connections.removeAll(where: { $0.fromNodeID == nodeID || $0.toNodeID == nodeID })
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func moveNodeInActiveCustomPatch(nodeID: UUID, to position: CustomPatchPoint) {
+        guard var patch = activeCustomPatch else { return }
+        guard let index = patch.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+        patch.nodes[index].position = position
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func addConnectionToActiveCustomPatch(
+        fromNodeID: UUID, fromPort: String, toNodeID: UUID, toPort: String
+    ) {
+        guard var patch = activeCustomPatch else { return }
+        let alreadyConnected = patch.connections.contains(where: {
+            $0.toNodeID == toNodeID && $0.toPort == toPort
+        })
+        guard !alreadyConnected else { return }
+        let connection = CustomPatchConnection(
+            fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort
+        )
+        patch.connections.append(connection)
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func removeConnectionFromActiveCustomPatch(connectionID: UUID) {
+        guard var patch = activeCustomPatch else { return }
+        patch.connections.removeAll(where: { $0.id == connectionID })
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func updateNodeParameterInActiveCustomPatch(nodeID: UUID, parameterName: String, value: Double) {
+        guard var patch = activeCustomPatch else { return }
+        guard let nodeIndex = patch.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+        guard let paramIndex = patch.nodes[nodeIndex].parameters.firstIndex(where: { $0.name == parameterName }) else { return }
+        let param = patch.nodes[nodeIndex].parameters[paramIndex]
+        patch.nodes[nodeIndex].parameters[paramIndex].value = Swift.min(Swift.max(value, param.min), param.max)
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func updateViewportInActiveCustomPatch(viewport: CustomPatchViewport) {
+        guard var patch = activeCustomPatch else { return }
+        patch.viewport = viewport
+        commitActivePatch(patch)
+    }
+
+    private func commitActivePatch(_ patch: CustomPatch, pushUndo: Bool = true) {
+        if pushUndo, let current = activeCustomPatch {
+            patchUndoStack.append(current)
+            if patchUndoStack.count > Self.maxUndoDepth {
+                patchUndoStack.removeFirst()
+            }
+            patchRedoStack.removeAll()
+            syncUndoRedoState()
+        }
+        guard let index = customPatchLibrary.patches.firstIndex(where: { $0.id == patch.id }) else { return }
+        customPatchLibrary.patches[index] = patch
+        customPatchLibrary.activePatchID = patch.id
+        persistCustomPatchLibrary()
+        syncRendererState()
+    }
+
+    // MARK: - Undo / Redo
+
+    public func undoPatchEdit() {
+        guard let previous = patchUndoStack.popLast() else { return }
+        if let current = activeCustomPatch {
+            patchRedoStack.append(current)
+        }
+        guard let index = customPatchLibrary.patches.firstIndex(where: { $0.id == previous.id }) else { return }
+        customPatchLibrary.patches[index] = previous
+        customPatchLibrary.activePatchID = previous.id
+        persistCustomPatchLibrary()
+        syncRendererState()
+        syncUndoRedoState()
+    }
+
+    public func redoPatchEdit() {
+        guard let next = patchRedoStack.popLast() else { return }
+        if let current = activeCustomPatch {
+            patchUndoStack.append(current)
+        }
+        guard let index = customPatchLibrary.patches.firstIndex(where: { $0.id == next.id }) else { return }
+        customPatchLibrary.patches[index] = next
+        customPatchLibrary.activePatchID = next.id
+        persistCustomPatchLibrary()
+        syncRendererState()
+        syncUndoRedoState()
+    }
+
+    private func syncUndoRedoState() {
+        canUndoPatch = !patchUndoStack.isEmpty
+        canRedoPatch = !patchRedoStack.isEmpty
+    }
+
+    // MARK: - Copy / Paste
+
+    public func copyNodesFromActiveCustomPatch(nodeIDs: Set<UUID>) {
+        guard let patch = activeCustomPatch else { return }
+        let selectedNodes = patch.nodes.filter { nodeIDs.contains($0.id) }
+        guard !selectedNodes.isEmpty else { return }
+        let internalConnections = patch.connections.filter {
+            nodeIDs.contains($0.fromNodeID) && nodeIDs.contains($0.toNodeID)
+        }
+        patchClipboard = CustomPatchClipboard(nodes: selectedNodes, connections: internalConnections)
+    }
+
+    public func pasteNodesIntoActiveCustomPatch(offset: CustomPatchPoint = CustomPatchPoint(x: 40, y: 40)) {
+        guard let clipboard = patchClipboard, !clipboard.nodes.isEmpty else { return }
+        guard var patch = activeCustomPatch else { return }
+
+        var idMap: [UUID: UUID] = [:]
+        var newNodes: [CustomPatchNode] = []
+        for node in clipboard.nodes {
+            let newID = UUID()
+            idMap[node.id] = newID
+            var copy = node
+            copy.id = newID
+            copy.title = "\(node.title) copy"
+            copy.position = CustomPatchPoint(x: node.position.x + offset.x, y: node.position.y + offset.y)
+            newNodes.append(copy)
+        }
+
+        var newConnections: [CustomPatchConnection] = []
+        for conn in clipboard.connections {
+            guard let newFrom = idMap[conn.fromNodeID], let newTo = idMap[conn.toNodeID] else { continue }
+            newConnections.append(CustomPatchConnection(
+                fromNodeID: newFrom, fromPort: conn.fromPort, toNodeID: newTo, toPort: conn.toPort
+            ))
+        }
+
+        patch.nodes.append(contentsOf: newNodes)
+        patch.connections.append(contentsOf: newConnections)
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    // MARK: - Node Grouping
+
+    public func groupNodesInActiveCustomPatch(nodeIDs: Set<UUID>, name: String) {
+        guard var patch = activeCustomPatch else { return }
+        guard nodeIDs.count >= 2 else { return }
+        let validIDs = nodeIDs.filter { id in patch.nodes.contains(where: { $0.id == id }) }
+        guard validIDs.count >= 2 else { return }
+        let colorIndex = patch.groups.count % CustomPatchGroup.groupColors.count
+        let group = CustomPatchGroup(name: name, nodeIDs: Set(validIDs), colorIndex: colorIndex)
+        patch.groups.append(group)
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    public func ungroupInActiveCustomPatch(groupID: UUID) {
+        guard var patch = activeCustomPatch else { return }
+        patch.groups.removeAll(where: { $0.id == groupID })
+        patch.updatedAt = .now
+        commitActivePatch(patch)
+    }
+
+    // MARK: - Patch Export / Import
+
+    public func exportActiveCustomPatch() -> Data? {
+        guard let patch = activeCustomPatch else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(patch)
+    }
+
+    public func importCustomPatch(from data: Data) -> Bool {
+        guard let patch = try? JSONDecoder().decode(CustomPatch.self, from: data) else { return false }
+        var importedPatch = patch
+        importedPatch.id = UUID()
+        importedPatch.name = "\(patch.name) (Imported)"
+        importedPatch.updatedAt = .now
+        customPatchLibrary.patches.append(importedPatch)
+        customPatchLibrary.activePatchID = importedPatch.id
+        persistCustomPatchLibrary()
+        syncRendererState()
+        return true
+    }
+
+    public func duplicateActiveCustomPatch() {
+        guard let patch = activeCustomPatch else { return }
+        var duplicate = patch
+        duplicate.id = UUID()
+        duplicate.name = "\(patch.name) Copy"
+        duplicate.updatedAt = .now
+        // Remap all node and connection IDs to avoid collisions
+        var nodeIDMap: [UUID: UUID] = [:]
+        for i in 0..<duplicate.nodes.count {
+            let newID = UUID()
+            nodeIDMap[duplicate.nodes[i].id] = newID
+            duplicate.nodes[i].id = newID
+        }
+        for i in 0..<duplicate.connections.count {
+            duplicate.connections[i].id = UUID()
+            if let newFrom = nodeIDMap[duplicate.connections[i].fromNodeID] {
+                duplicate.connections[i].fromNodeID = newFrom
+            }
+            if let newTo = nodeIDMap[duplicate.connections[i].toNodeID] {
+                duplicate.connections[i].toNodeID = newTo
+            }
+        }
+        for i in 0..<duplicate.groups.count {
+            duplicate.groups[i].id = UUID()
+            duplicate.groups[i].nodeIDs = Set(duplicate.groups[i].nodeIDs.compactMap { nodeIDMap[$0] })
+        }
+        customPatchLibrary.patches.append(duplicate)
+        customPatchLibrary.activePatchID = duplicate.id
+        persistCustomPatchLibrary()
+        syncRendererState()
     }
 
     public func selectDisplayTarget(id: String) {
@@ -919,6 +1239,15 @@ public final class SessionViewModel: ObservableObject {
                 session.outputState.selectedDisplayTargetID = selectedTargetID
             }
             .store(in: &cancellables)
+    }
+
+    private func persistCustomPatchLibrary() {
+        do {
+            try customPatchService.saveLibrary(customPatchLibrary)
+            customPatchLibrary = customPatchService.loadLibrary()
+        } catch {
+            return
+        }
     }
 
     private func refreshPresetsFromStore() {
