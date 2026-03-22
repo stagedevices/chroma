@@ -11,6 +11,7 @@ import Photos
 #endif
 
 struct ModePickerSheet: View {
+    @ObservedObject var appViewModel: AppViewModel
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
 
@@ -19,7 +20,8 @@ struct ModePickerSheet: View {
     @State private var pageMotionToken = UUID()
     @State private var applyMotionToken = UUID()
 
-    init(sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+    init(appViewModel: AppViewModel, sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+        self.appViewModel = appViewModel
         self.sessionViewModel = sessionViewModel
         self.dismiss = dismiss
         _draftState = State(initialValue: ModePickerDraftState(activeModeID: sessionViewModel.session.activeModeID))
@@ -54,12 +56,14 @@ struct ModePickerSheet: View {
                             presentation: presentation,
                             isSelected: mode.id == draftState.selectedModeID,
                             pageMotionToken: pageMotionToken,
-                            reduceMotion: reduceMotion
+                            reduceMotion: reduceMotion,
+                            showsLockedBadge: ProEntitlement.requiresPro(.mode(mode.id)) && !appViewModel.billingStore.proAccessVisualState.hasFeatureAccess
                         )
                         .tag(mode.id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .padding(.top, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 modePaginationDots
@@ -101,20 +105,64 @@ struct ModePickerSheet: View {
     }
 
     private var modePaginationDots: some View {
-        HStack(spacing: 8) {
-            ForEach(sessionViewModel.availableModes) { mode in
-                let isActive = mode.id == draftState.selectedModeID
-                Capsule()
-                    .fill(
-                        isActive
-                            ? selectedModePresentation.accentColor.opacity(sessionViewModel.isLightGlassAppearance ? 0.94 : 0.98)
-                            : Color.secondary.opacity(sessionViewModel.isLightGlassAppearance ? 0.35 : 0.48)
-                    )
-                    .frame(width: isActive ? 24 : 8, height: 8)
-                    .animation(.spring(response: 0.26, dampingFraction: 0.82), value: draftState.selectedModeID)
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            HStack(spacing: 8) {
+                ForEach(sessionViewModel.availableModes) { mode in
+                    let isActive = mode.id == draftState.selectedModeID
+                    Capsule()
+                        .fill(
+                            isActive
+                                ? selectedModePresentation.accentColor.opacity(sessionViewModel.isLightGlassAppearance ? 0.94 : 0.98)
+                                : Color.secondary.opacity(sessionViewModel.isLightGlassAppearance ? 0.35 : 0.48)
+                        )
+                        .frame(width: isActive ? 24 : 8, height: 8)
+                        .animation(.spring(response: 0.26, dampingFraction: 0.82), value: draftState.selectedModeID)
+                }
             }
+
+            Spacer(minLength: 0)
+
+            customShortcutChip
         }
-        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var customShortcutChip: some View {
+        let isCustomSelected = draftState.selectedModeID == .custom
+        let customPresentation = modePickerHeroPresentation(for: .custom)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                draftState.preview(.custom)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 10, weight: .bold))
+                Text("CUSTOM")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(0.4)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                isCustomSelected
+                    ? customPresentation.accentColor.opacity(0.28)
+                    : Color.secondary.opacity(0.12),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(
+                        isCustomSelected
+                            ? customPresentation.accentColor.opacity(0.5)
+                            : Color.clear,
+                        lineWidth: 1
+                    )
+            }
+            .foregroundStyle(isCustomSelected ? customPresentation.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var applyButton: some View {
@@ -123,12 +171,27 @@ struct ModePickerSheet: View {
                 applyMotionToken = UUID()
             }
             performImpactHaptic()
-            sessionViewModel.selectMode(draftState.activeModeAfterApply())
+
+            let selectedModeID = draftState.activeModeAfterApply()
+            if ProEntitlement.requiresPro(.mode(selectedModeID)),
+               !appViewModel.billingStore.proAccessVisualState.hasFeatureAccess {
+                appViewModel.presentPaywall(entryPoint: .mode(selectedModeID), dismissingPresentedSheet: true)
+                return
+            }
+
+            sessionViewModel.selectMode(selectedModeID)
             dismiss()
         } label: {
             HStack(spacing: 10) {
                 applyIcon
-                Text("SWITCH TO \(selectedModeDescriptor.name.uppercased())")
+                Text(
+                    (
+                        ProEntitlement.requiresPro(.mode(selectedModeDescriptor.id)) &&
+                        !appViewModel.billingStore.proAccessVisualState.hasFeatureAccess
+                    )
+                    ? "UNLOCK \(selectedModeDescriptor.name.uppercased())"
+                    : "SWITCH TO \(selectedModeDescriptor.name.uppercased())"
+                )
                     .font(.system(size: 16, weight: .heavy, design: .rounded))
                     .tracking(0.6)
                     .lineLimit(1)
@@ -288,11 +351,10 @@ private struct ModePickerHeroPage: View {
     let isSelected: Bool
     let pageMotionToken: UUID
     let reduceMotion: Bool
-
+    let showsLockedBadge: Bool
+    
     var body: some View {
-        VStack(spacing: 18) {
-            Spacer(minLength: 2)
-
+        VStack(spacing: 12) {
             ZStack {
                 Circle()
                     .fill(presentation.accentGradient.opacity(0.24))
@@ -300,11 +362,11 @@ private struct ModePickerHeroPage: View {
                         Circle()
                             .stroke(presentation.accentColor.opacity(0.34), lineWidth: 1)
                     }
-                    .frame(width: 164, height: 164)
-                
+                    .frame(width: 140, height: 140)
+
                 heroIcon
             }
-            .frame(width: 190, height: 190)
+            .frame(width: 148, height: 148)
             .frame(maxWidth: .infinity, alignment: .center)
 
             VStack(spacing: 8) {
@@ -314,13 +376,6 @@ private struct ModePickerHeroPage: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
-
-         //       Text(presentation.tagline)
-           //         .font(ChromaTypography.sheetRowTitle)
-             //       .foregroundStyle(.secondary)
-               //     .multilineTextAlignment(.center)
-                 //   .lineLimit(1)
-                   // .minimumScaleFactor(0.82)
 
                 Text(mode.summary)
                     .font(ChromaTypography.bodySecondary)
@@ -348,8 +403,14 @@ private struct ModePickerHeroPage: View {
 
             Spacer(minLength: 0)
         }
+        .overlay(alignment: .topTrailing) {
+            if showsLockedBadge {
+                ChromaProBadge(style: .locked)
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 10)
         .padding(.horizontal, 10)
     }
 
@@ -358,10 +419,10 @@ private struct ModePickerHeroPage: View {
         let icon = Image(systemName: presentation.systemImage)
             .resizable()
             .scaledToFit()
-            .frame(width: 82, height: 82)
+            .frame(width: 68, height: 68)
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white.opacity(0.95), presentation.accentColor)
-            .frame(width: 96, height: 96)
+            .frame(width: 80, height: 80)
 
         if reduceMotion {
             icon
@@ -432,7 +493,7 @@ struct CustomPatchBuilderSheet: View {
     }
 
     private var patchHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Picker(
                 "Patch",
                 selection: Binding<UUID?>(
@@ -448,30 +509,38 @@ struct CustomPatchBuilderSheet: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 170)
+            .lineLimit(1)
 
-            TextField("Patch Name", text: $renameDraft)
+            Spacer(minLength: 4)
+
+            TextField("Rename", text: $renameDraft)
                 .textInputAutocapitalization(.words)
                 .disableAutocorrection(true)
-                .onSubmit {
-                    commitRename()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .onSubmit { commitRename() }
+                .font(ChromaTypography.metric)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: 180)
                 .background(
                     isLightAppearance ? Color.black.opacity(0.08) : Color.white.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                 )
 
-            Button("Rename") {
+            Button {
                 commitRename()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .bold))
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             .tint(isLightAppearance ? .black : .white)
             .foregroundStyle(isLightAppearance ? Color.white : Color.black)
         }
-        .padding(12)
-        .recorderGlassCardBackground(cornerRadius: 18, isLightAppearance: isLightAppearance)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .recorderGlassCardBackground(cornerRadius: 14, isLightAppearance: isLightAppearance)
     }
 
     private var toolStrip: some View {
@@ -1003,7 +1072,6 @@ private struct CustomPatchGraphCanvas: View {
 
             ZStack {
                 CustomPatchGridBackground(isLightAppearance: isLightAppearance)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 if let patch {
                     canvasContent(patch: patch, canvasCenter: canvasCenter)
@@ -1013,6 +1081,7 @@ private struct CustomPatchGraphCanvas: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .contentShape(Rectangle())
             .gesture(panGesture)
             .gesture(zoomGesture)
@@ -1311,7 +1380,7 @@ private struct CustomPatchNodeView: View {
             .contentShape(Rectangle())
             .onTapGesture { onSelect() }
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged(onDragChanged)
                     .onEnded(onDragEnded)
             )
@@ -1754,7 +1823,83 @@ struct RiemannPalettePickerSheet: View {
     }
 }
 
+// MARK: - Preset & Cue Paginated Sheet
+
+private enum PresetCuePage: Int, CaseIterable {
+    case presets
+    case cues
+
+    var title: String {
+        switch self {
+        case .presets: return "PRESETS"
+        case .cues: return "CUES"
+        }
+    }
+}
+
 struct PresetBrowserSheet: View {
+    @ObservedObject var appViewModel: AppViewModel
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+
+    @State private var activePage: PresetCuePage = .presets
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                TabView(selection: $activePage) {
+                    PresetBrowserPage(
+                        appViewModel: appViewModel,
+                        sessionViewModel: sessionViewModel,
+                        dismiss: dismiss
+                    )
+                    .tag(PresetCuePage.presets)
+
+                    CueComposerPage(
+                        appViewModel: appViewModel,
+                        sessionViewModel: sessionViewModel,
+                        dismiss: dismiss
+                    )
+                    .tag(PresetCuePage.cues)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                presetCuePaginationDots
+                    .padding(.top, 6)
+                    .padding(.bottom, 12)
+            }
+            .font(ChromaTypography.body)
+            .navigationTitle(activePage.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetToolbarCloseButton(action: dismiss)
+                }
+            }
+        }
+    }
+
+    private var presetCuePaginationDots: some View {
+        HStack(spacing: 8) {
+            ForEach(PresetCuePage.allCases, id: \.rawValue) { page in
+                let isActive = page == activePage
+                Capsule()
+                    .fill(
+                        isActive
+                            ? Color.blue.opacity(sessionViewModel.isLightGlassAppearance ? 0.94 : 0.98)
+                            : Color.secondary.opacity(sessionViewModel.isLightGlassAppearance ? 0.35 : 0.48)
+                    )
+                    .frame(width: isActive ? 24 : 8, height: 8)
+                    .animation(.spring(response: 0.26, dampingFraction: 0.82), value: activePage)
+            }
+        }
+    }
+}
+
+// MARK: - Presets Page (extracted from former PresetBrowserSheet)
+
+private struct PresetBrowserPage: View {
+    @ObservedObject var appViewModel: AppViewModel
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1766,7 +1911,8 @@ struct PresetBrowserSheet: View {
     @State private var renameDraft: String = ""
     @State private var deletingPreset: Preset?
 
-    init(sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+    init(appViewModel: AppViewModel, sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+        self.appViewModel = appViewModel
         self.sessionViewModel = sessionViewModel
         self.dismiss = dismiss
         _draftState = State(
@@ -1786,20 +1932,11 @@ struct PresetBrowserSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            presetBrowserContent
+        presetBrowserContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 20)
             .padding(.top, 14)
             .padding(.bottom, 18)
-            .font(ChromaTypography.body)
-            .navigationTitle("PRESETS")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    SheetToolbarCloseButton(action: dismiss)
-                }
-            }
             .onChange(of: draftState.selectedPresetID) { _, _ in
                 guard !reduceMotion else { return }
                 selectionMotionToken = UUID()
@@ -1846,9 +1983,8 @@ struct PresetBrowserSheet: View {
                     deletingPreset = nil
                 }
             } message: { preset in
-                Text("“\(preset.name)” will be removed.")
+                Text("'\(preset.name)' will be removed.")
             }
-        }
     }
 
     @ViewBuilder
@@ -1900,10 +2036,19 @@ struct PresetBrowserSheet: View {
     private func presetContextMenu(for preset: Preset) -> some View {
         if preset.id == draftState.selectedPresetID {
             Button("Rename") {
+                guard appViewModel.billingStore.proAccessVisualState.hasFeatureAccess else {
+                    appViewModel.presentPaywall(entryPoint: .presets, dismissingPresentedSheet: true)
+                    return
+                }
                 renamingPreset = preset
                 renameDraft = preset.name
             }
+
             Button("Delete", role: .destructive) {
+                guard appViewModel.billingStore.proAccessVisualState.hasFeatureAccess else {
+                    appViewModel.presentPaywall(entryPoint: .presets, dismissingPresentedSheet: true)
+                    return
+                }
                 deletingPreset = preset
             }
         }
@@ -2041,7 +2186,499 @@ struct PresetBrowserSheet: View {
     }
 }
 
+// MARK: - Cue Composer Page
+
+private struct CueComposerPage: View {
+    @ObservedObject var appViewModel: AppViewModel
+    @ObservedObject var sessionViewModel: SessionViewModel
+    let dismiss: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var activeSetID: UUID?
+    @State private var isCreatingSet = false
+    @State private var newSetName: String = ""
+    @State private var renamingSet: PerformanceSet?
+    @State private var renameSetDraft: String = ""
+    @State private var deletingSet: PerformanceSet?
+    @State private var renamingCue: PerformanceCue?
+    @State private var renameCueDraft: String = ""
+    @State private var editingTimingCue: PerformanceCue?
+    @State private var delayDraft: String = ""
+    @State private var transitionDraft: String = ""
+    @State private var deletingCue: PerformanceCue?
+
+    private var activeSet: PerformanceSet? {
+        if let activeSetID {
+            return sessionViewModel.performanceSets.first(where: { $0.id == activeSetID })
+        }
+        return sessionViewModel.performanceSets.first
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if sessionViewModel.performanceSets.isEmpty {
+                cueEmptyState
+            } else {
+                setHeader
+                if let set = activeSet {
+                    if set.cues.isEmpty {
+                        cueListEmptyState
+                    } else {
+                        cueScrollList(for: set)
+                    }
+                    addCueButton(for: set)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 18)
+        .onAppear {
+            if activeSetID == nil {
+                activeSetID = sessionViewModel.performanceSets.first?.id
+            }
+        }
+        .onChange(of: sessionViewModel.performanceSets.map(\.id)) { _, newIDs in
+            if let activeSetID, !newIDs.contains(activeSetID) {
+                self.activeSetID = newIDs.first
+            }
+        }
+        .alert(
+            "New Set",
+            isPresented: $isCreatingSet
+        ) {
+            TextField("Set Name", text: $newSetName)
+            Button("Cancel", role: .cancel) {
+                isCreatingSet = false
+            }
+            Button("Create") {
+                sessionViewModel.createPerformanceSet(name: newSetName)
+                if let created = sessionViewModel.performanceSets.first(where: {
+                    $0.name == newSetName.trimmingCharacters(in: .whitespacesAndNewlines)
+                }) {
+                    activeSetID = created.id
+                }
+                newSetName = ""
+                isCreatingSet = false
+            }
+        }
+        .alert(
+            "Rename Set",
+            isPresented: Binding(
+                get: { renamingSet != nil },
+                set: { if !$0 { renamingSet = nil } }
+            )
+        ) {
+            TextField("Set Name", text: $renameSetDraft)
+            Button("Cancel", role: .cancel) {
+                renamingSet = nil
+            }
+            Button("Save") {
+                guard let renamingSet else { return }
+                sessionViewModel.renamePerformanceSet(id: renamingSet.id, newName: renameSetDraft)
+                self.renamingSet = nil
+            }
+        }
+        .alert(
+            "Delete Set?",
+            isPresented: Binding(
+                get: { deletingSet != nil },
+                set: { if !$0 { deletingSet = nil } }
+            ),
+            presenting: deletingSet
+        ) { set in
+            Button("Delete", role: .destructive) {
+                sessionViewModel.deletePerformanceSet(id: set.id)
+                deletingSet = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deletingSet = nil
+            }
+        } message: { set in
+            Text("'\(set.name)' and all its cues will be removed.")
+        }
+        .alert(
+            "Rename Cue",
+            isPresented: Binding(
+                get: { renamingCue != nil },
+                set: { if !$0 { renamingCue = nil } }
+            )
+        ) {
+            TextField("Cue Name", text: $renameCueDraft)
+            Button("Cancel", role: .cancel) {
+                renamingCue = nil
+            }
+            Button("Save") {
+                guard let setID = activeSet?.id, var cue = renamingCue else { return }
+                cue.name = renameCueDraft
+                sessionViewModel.updateCue(in: setID, cue: cue)
+                renamingCue = nil
+            }
+        }
+        .alert(
+            "Edit Timing",
+            isPresented: Binding(
+                get: { editingTimingCue != nil },
+                set: { if !$0 { editingTimingCue = nil } }
+            )
+        ) {
+            TextField("Delay (seconds)", text: $delayDraft)
+#if canImport(UIKit)
+                .keyboardType(.decimalPad)
+#endif
+            TextField("Transition (seconds)", text: $transitionDraft)
+#if canImport(UIKit)
+                .keyboardType(.decimalPad)
+#endif
+            Button("Cancel", role: .cancel) {
+                editingTimingCue = nil
+            }
+            Button("Save") {
+                guard let setID = activeSet?.id, var cue = editingTimingCue else { return }
+                cue.delayFromPrevious = max(0, Double(delayDraft) ?? 0)
+                cue.transitionDuration = max(0, Double(transitionDraft) ?? 0)
+                sessionViewModel.updateCue(in: setID, cue: cue)
+                editingTimingCue = nil
+            }
+        }
+        .alert(
+            "Delete Cue?",
+            isPresented: Binding(
+                get: { deletingCue != nil },
+                set: { if !$0 { deletingCue = nil } }
+            ),
+            presenting: deletingCue
+        ) { cue in
+            Button("Delete", role: .destructive) {
+                guard let setID = activeSet?.id else { return }
+                sessionViewModel.deleteCue(from: setID, cueID: cue.id)
+                deletingCue = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deletingCue = nil
+            }
+        } message: { cue in
+            Text("'\(cue.name)' will be removed from this set.")
+        }
+    }
+
+    // MARK: - Empty States
+
+    private var cueEmptyState: some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 4)
+            Image(systemName: "list.bullet.rectangle")
+                .font(.system(size: 32, weight: .semibold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(
+                    sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.88) : Color.white.opacity(0.94),
+                    Color.secondary.opacity(0.65)
+                )
+            Text("No cue sets yet.")
+                .font(ChromaTypography.sheetRowTitle)
+                .multilineTextAlignment(.center)
+            Text("Create a set to build a sequence of preset recalls for live performance.")
+                .font(ChromaTypography.bodySecondary)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+            Spacer(minLength: 8)
+            Button {
+                newSetName = ""
+                isCreatingSet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("CREATE SET")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .tracking(0.6)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(
+                    Color.blue.opacity(sessionViewModel.isLightGlassAppearance ? 0.18 : 0.22),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.blue.opacity(0.4), lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.blue)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 16)
+        .recorderGlassCardBackground(
+            cornerRadius: 18,
+            isLightAppearance: sessionViewModel.isLightGlassAppearance
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var cueListEmptyState: some View {
+        VStack(spacing: 8) {
+            Spacer(minLength: 4)
+            Text("No cues in this set.")
+                .font(ChromaTypography.bodySecondary)
+                .foregroundStyle(.secondary)
+            Text("Add a cue to capture the current preset into this sequence.")
+                .font(ChromaTypography.bodySecondary)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 16)
+        .recorderGlassCardBackground(
+            cornerRadius: 18,
+            isLightAppearance: sessionViewModel.isLightGlassAppearance
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Set Header
+
+    private var setHeader: some View {
+        HStack(spacing: 10) {
+            if sessionViewModel.performanceSets.count > 1 {
+                setSwitcher
+            } else if let set = activeSet {
+                Text(set.name.uppercased())
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .tracking(0.8)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            if let set = activeSet {
+                Menu {
+                    Button {
+                        renamingSet = set
+                        renameSetDraft = set.name
+                    } label: {
+                        Label("Rename Set", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        deletingSet = set
+                    } label: {
+                        Label("Delete Set", systemImage: "trash")
+                    }
+                    Divider()
+                    Button {
+                        newSetName = ""
+                        isCreatingSet = true
+                    } label: {
+                        Label("New Set", systemImage: "plus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var setSwitcher: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(sessionViewModel.performanceSets) { set in
+                    let isActive = set.id == (activeSetID ?? sessionViewModel.performanceSets.first?.id)
+                    Button {
+                        activeSetID = set.id
+                    } label: {
+                        Text(set.name.uppercased())
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .tracking(0.4)
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                isActive
+                                    ? Color.blue.opacity(0.28)
+                                    : Color.secondary.opacity(0.12),
+                                in: Capsule()
+                            )
+                            .overlay {
+                                Capsule()
+                                    .stroke(
+                                        isActive ? Color.blue.opacity(0.5) : Color.clear,
+                                        lineWidth: 1
+                                    )
+                            }
+                            .foregroundStyle(isActive ? Color.blue : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Cue List
+
+    private func cueScrollList(for set: PerformanceSet) -> some View {
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(Array(set.cues.enumerated()), id: \.element.id) { index, cue in
+                    cueTile(cue: cue, index: index + 1, setID: set.id)
+                }
+            }
+            .padding(.horizontal, 1)
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func cueTile(cue: PerformanceCue, index: Int, setID: UUID) -> some View {
+        let linkedPresetName = cue.presetID.flatMap { pid in
+            sessionViewModel.presets.first(where: { $0.id == pid })?.name
+        } ?? "No preset"
+
+        return Button {
+            performImpactHaptic()
+            sessionViewModel.fireCue(cue)
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Text("\(index)")
+                    .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color.blue.opacity(sessionViewModel.isLightGlassAppearance ? 0.14 : 0.18),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .foregroundStyle(Color.blue.opacity(sessionViewModel.isLightGlassAppearance ? 0.86 : 0.92))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cue.name)
+                        .font(ChromaTypography.sheetRowTitle)
+                        .lineLimit(1)
+                    Text(linkedPresetName.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .tracking(0.7)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                if cue.delayFromPrevious > 0 {
+                    cueTimingBadge(text: formatSeconds(cue.delayFromPrevious) + " delay")
+                }
+                if cue.transitionDuration > 0 {
+                    cueTimingBadge(text: formatSeconds(cue.transitionDuration) + " fade")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .recorderGlassCardBackground(cornerRadius: 16, isLightAppearance: sessionViewModel.isLightGlassAppearance)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                renamingCue = cue
+                renameCueDraft = cue.name
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button {
+                editingTimingCue = cue
+                delayDraft = cue.delayFromPrevious > 0 ? formatSeconds(cue.delayFromPrevious) : ""
+                transitionDraft = cue.transitionDuration > 0 ? formatSeconds(cue.transitionDuration) : ""
+            } label: {
+                Label("Edit Timing", systemImage: "clock")
+            }
+            Divider()
+            Button(role: .destructive) {
+                deletingCue = cue
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    private func cueTimingBadge(text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .tracking(0.3)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Color.orange.opacity(sessionViewModel.isLightGlassAppearance ? 0.16 : 0.20),
+                in: Capsule()
+            )
+            .foregroundStyle(Color.orange)
+    }
+
+    // MARK: - Add Cue Button
+
+    private func addCueButton(for set: PerformanceSet) -> some View {
+        Button {
+            performImpactHaptic()
+            sessionViewModel.addCueFromActivePreset(to: set.id)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.blue)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        sessionViewModel.isLightGlassAppearance ? Color.black.opacity(0.10) : Color.white.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                Text("ADD CUE FROM CURRENT PRESET")
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                    .tracking(0.6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .modePickerApplyButtonBackground(
+                accentGradient: LinearGradient(
+                    colors: [Color.blue.opacity(0.82), Color.indigo.opacity(0.82)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                borderColor: Color.blue,
+                isLightAppearance: sessionViewModel.isLightGlassAppearance
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(sessionViewModel.session.activePresetID == nil)
+        .opacity(sessionViewModel.session.activePresetID == nil ? 0.45 : 1)
+    }
+
+    // MARK: - Helpers
+
+    private func formatSeconds(_ value: TimeInterval) -> String {
+        if value == value.rounded() && value < 100 {
+            return String(format: "%.0fs", value)
+        }
+        return String(format: "%.1fs", value)
+    }
+
+    private func performImpactHaptic() {
+#if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+#endif
+    }
+}
+
 struct RecorderExportSheet: View {
+    @ObservedObject var appViewModel: AppViewModel
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
     @State private var captureStartDate: Date?
@@ -2053,6 +2690,12 @@ struct RecorderExportSheet: View {
 
     private let elapsedTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
+    init(appViewModel: AppViewModel, sessionViewModel: SessionViewModel, dismiss: @escaping () -> Void) {
+        self.appViewModel = appViewModel
+        self.sessionViewModel = sessionViewModel
+        self.dismiss = dismiss
+    }
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
@@ -2182,19 +2825,35 @@ struct RecorderExportSheet: View {
     private var captureActionTile: some View {
         RecorderConsoleActionTile(
             title: actionButtonTitle,
-            subtitle: actionButtonSubtitle,
+            subtitle: appViewModel.billingStore.isProActive ? actionButtonSubtitle : "Pro required for recording & export",
             systemImage: actionButtonIcon,
             accentColor: .red.opacity(0.88),
             isLightAppearance: sessionViewModel.isLightGlassAppearance,
             isEnabled: !actionButtonDisabled
         ) {
+            if case .recording = sessionViewModel.recorderCaptureState {
+                Task {
+                    performImpactHaptic()
+                    await sessionViewModel.stopRecorderCapture()
+                }
+                return
+            }
+
+            guard appViewModel.billingStore.proAccessVisualState.hasFeatureAccess else {
+                performImpactHaptic()
+                appViewModel.presentPaywall(entryPoint: .recording, dismissingPresentedSheet: true)
+                return
+            }
+
             Task {
                 performImpactHaptic()
-                if case .recording = sessionViewModel.recorderCaptureState {
-                    await sessionViewModel.stopRecorderCapture()
-                } else {
-                    await sessionViewModel.startRecorderCapture()
-                }
+                await sessionViewModel.startRecorderCapture()
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if !appViewModel.billingStore.isProActive {
+                ChromaProBadge(style: .locked)
+                    .padding(10)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2481,8 +3140,10 @@ struct RecorderExportSheet: View {
 }
 
 struct SettingsDiagnosticsSheet: View {
+    @ObservedObject var appViewModel: AppViewModel
     @ObservedObject var sessionViewModel: SessionViewModel
     let dismiss: () -> Void
+    @Environment(\.openURL) private var openURL
     @State private var inkTransitionProgress: CGFloat = 0.001
     @State private var inkTransitionOpacity: Double = 0
     @State private var diagnosticsExpanded = false
@@ -2492,6 +3153,7 @@ struct SettingsDiagnosticsSheet: View {
         NavigationStack {
             ZStack {
                 List {
+                    chromaProSection
                     performanceSection
                     audioCalibrationSection
                     if sessionViewModel.session.activeModeID == .riemannCorridor {
@@ -2539,6 +3201,59 @@ struct SettingsDiagnosticsSheet: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This clears current session state and live parameters. Presets and mode defaults are preserved.")
+        }
+    }
+    
+    private var chromaProSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    ChromaProBadge(style: .status(appViewModel.billingStore.proAccessVisualState))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(appViewModel.billingStore.proAccessVisualSignals.title)
+                            .font(ChromaTypography.sheetRowTitle)
+
+                        if let caption = appViewModel.billingStore.proAccessVisualSignals.caption {
+                            Text(caption)
+                                .font(ChromaTypography.bodySecondary)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 8) {
+                    ExportSettingTileButton(
+                        title: "Restore Purchases",
+                        subtitle: nil,
+                        isSelected: false,
+                        isEnabled: !appViewModel.billingStore.isPurchasing,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        Task {
+                            await appViewModel.billingStore.restorePurchases()
+                        }
+                    }
+
+                    ExportSettingTileButton(
+                        title: "Manage Subscription",
+                        subtitle: nil,
+                        isSelected: false,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        guard let url = URL(string: "https://apps.apple.com/account/subscriptions") else { return }
+                        openURL(url)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Chroma Pro")
         }
     }
 
@@ -3006,15 +3721,29 @@ struct SettingsDiagnosticsSheet: View {
                 let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                     ForEach(sessionViewModel.session.availableDisplayTargets, id: \.id) { target in
+                        let selectingExternalRequiresPro =
+                            target.id == "external" &&
+                            !appViewModel.billingStore.proAccessVisualState.hasFeatureAccess
+
                         ExportSettingTileButton(
                             title: target.name,
-                            subtitle: target.isAvailable ? "Ready" : "Unavailable",
+                            subtitle: selectingExternalRequiresPro ? "Pro required" : (target.isAvailable ? "Ready" : "Unavailable"),
                             isSelected: target.id == sessionViewModel.session.outputState.selectedDisplayTargetID,
                             isEnabled: target.isAvailable,
                             tintColor: exportSettingsTintColor,
                             isLightAppearance: sessionViewModel.isLightGlassAppearance
                         ) {
+                            if target.id == "external" && !appViewModel.billingStore.proAccessVisualState.hasFeatureAccess {
+                                appViewModel.presentPaywall(entryPoint: .externalDisplay, dismissingPresentedSheet: true)
+                                return
+                            }
                             sessionViewModel.selectDisplayTarget(id: target.id)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if selectingExternalRequiresPro {
+                                ChromaProBadge(style: .locked)
+                                    .padding(6)
+                            }
                         }
                     }
                 }

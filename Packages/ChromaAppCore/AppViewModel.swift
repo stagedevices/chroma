@@ -11,6 +11,10 @@ public enum PerformanceChromeState: Equatable {
 @MainActor
 public final class AppViewModel: ObservableObject {
     public let router: AppRouter
+    public let billingStore: BillingStore
+
+    @Published public var isShowingPaywall = false
+    @Published public var paywallEntryPoint: ProPaywallEntryPoint?
 
     @Published public var isPerformanceModeEnabled: Bool
     @Published public private(set) var performanceChromeState: PerformanceChromeState
@@ -32,12 +36,14 @@ public final class AppViewModel: ObservableObject {
 
     public init(
         router: AppRouter,
+        billingStore: BillingStore,
         isPerformanceModeEnabled: Bool = false,
         chromeHideDelayNanoseconds: UInt64 = 3_500_000_000,
         showControlsHideDelayNanoseconds: UInt64 = 1_800_000_000,
         showControlsRevealDelayNanoseconds: UInt64 = 80_000_000
     ) {
         self.router = router
+        self.billingStore = billingStore
         self.isPerformanceModeEnabled = isPerformanceModeEnabled
         self.performanceChromeState = .controlsVisible
         self.chromeHideDelayNanoseconds = chromeHideDelayNanoseconds
@@ -163,6 +169,40 @@ public final class AppViewModel: ObservableObject {
     public func presentCustomPatchBuilder() {
         registerPerformanceInteraction()
         router.present(.customBuilder)
+    }
+    
+    public func presentPaywall(
+        entryPoint: ProPaywallEntryPoint,
+        dismissingPresentedSheet: Bool = false
+    ) {
+        paywallEntryPoint = entryPoint
+
+        if dismissingPresentedSheet {
+            router.dismiss()
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.isShowingPaywall = true
+            }
+        } else {
+            isShowingPaywall = true
+        }
+    }
+
+    public func dismissPaywall() {
+        isShowingPaywall = false
+        paywallEntryPoint = nil
+    }
+
+    @discardableResult
+    public func requirePro(
+        for feature: ProFeature,
+        entryPoint: ProPaywallEntryPoint
+    ) -> Bool {
+        guard ProEntitlement.requiresPro(feature) else { return false }
+        guard !billingStore.proAccessVisualState.hasFeatureAccess else { return false }
+
+        presentPaywall(entryPoint: entryPoint)
+        return true
     }
 
     private func showRevealControlTemporarily() {

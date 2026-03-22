@@ -30,7 +30,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(appSheetDetentStyle(for: .tunnelVariantPicker), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .fractalPalettePicker), .mediumOnly)
         XCTAssertEqual(appSheetDetentStyle(for: .riemannPalettePicker), .mediumOnly)
-        XCTAssertEqual(appSheetDetentStyle(for: .customBuilder), .mediumAndLarge)
+        XCTAssertEqual(appSheetDetentStyle(for: .customBuilder), .largeOnly)
     }
 
     func testSheetPresentationStyleMatchesDestinationContract() {
@@ -47,7 +47,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testAppViewModelTogglesPerformanceMode() {
-        let appViewModel = AppViewModel(router: AppRouter())
+        let appViewModel = AppViewModel(router: AppRouter(), billingStore: BillingStore(storeKitEnabled: false))
         XCTAssertFalse(appViewModel.isPerformanceModeEnabled)
 
         appViewModel.togglePerformanceMode()
@@ -64,7 +64,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testExitPerformanceModeIsOneWayAndCannotReenterFullscreen() {
-        let appViewModel = AppViewModel(router: AppRouter())
+        let appViewModel = AppViewModel(router: AppRouter(), billingStore: BillingStore(storeKitEnabled: false))
 
         // No-op when already not in fullscreen.
         appViewModel.exitPerformanceMode()
@@ -80,7 +80,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testPerformanceModeChromeCanHideAndReveal() {
-        let appViewModel = AppViewModel(router: AppRouter())
+        let appViewModel = AppViewModel(router: AppRouter(), billingStore: BillingStore(storeKitEnabled: false))
 
         appViewModel.togglePerformanceMode()
         appViewModel.hidePerformanceChrome()
@@ -96,6 +96,7 @@ final class AppStateTests: XCTestCase {
     func testPerformanceModeRevealButtonAutoHidesFully() async {
         let appViewModel = AppViewModel(
             router: AppRouter(),
+            billingStore: BillingStore(storeKitEnabled: false),
             chromeHideDelayNanoseconds: 120_000_000,
             showControlsHideDelayNanoseconds: 60_000_000,
             showControlsRevealDelayNanoseconds: 10_000_000
@@ -115,6 +116,7 @@ final class AppStateTests: XCTestCase {
     func testCanvasTapHiddenStateShowsRevealAndSecondTapKeepsFullscreenHiddenChrome() async {
         let appViewModel = AppViewModel(
             router: AppRouter(),
+            billingStore: BillingStore(storeKitEnabled: false),
             chromeHideDelayNanoseconds: 500_000_000,
             showControlsHideDelayNanoseconds: 80_000_000,
             showControlsRevealDelayNanoseconds: 10_000_000
@@ -136,6 +138,7 @@ final class AppStateTests: XCTestCase {
     func testRegisterPerformanceInteractionKeepsChromeVisibleUntilAutoHide() async {
         let appViewModel = AppViewModel(
             router: AppRouter(),
+            billingStore: BillingStore(storeKitEnabled: false),
             chromeHideDelayNanoseconds: 80_000_000,
             showControlsHideDelayNanoseconds: 50_000_000,
             showControlsRevealDelayNanoseconds: 10_000_000
@@ -152,7 +155,7 @@ final class AppStateTests: XCTestCase {
 
     func testAppViewModelPresentsModeStylePickers() {
         let router = AppRouter()
-        let appViewModel = AppViewModel(router: router)
+        let appViewModel = AppViewModel(router: router, billingStore: BillingStore(storeKitEnabled: false))
 
         appViewModel.presentTunnelVariantPicker()
         XCTAssertEqual(router.presentedSheet, .tunnelVariantPicker)

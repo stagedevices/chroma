@@ -110,6 +110,8 @@ public final class MetalRendererService: RendererService {
     private var tunnelTargets: TunnelRenderTargets?
     private var fractalTargets: FractalRenderTargets?
     private var riemannTargets: RiemannRenderTargets?
+    private var postProcessSceneTexture: MTLTexture?
+    private var postProcessSceneSize: CGSize = .zero
     private var linearSampler: MTLSamplerState?
 
     private var startTime: CFTimeInterval
@@ -122,6 +124,12 @@ public final class MetalRendererService: RendererService {
     private var inFlightDrawableID: ObjectIdentifier?
     private var inFlightDrawableSubmittedAt: CFTimeInterval?
     private var consecutiveCommandBufferErrors = 0
+
+    private var modeTransitionStartTime: CFTimeInterval?
+    private static let modeTransitionDuration: CFTimeInterval = 0.45
+    private var transitionSnapshotTexture: MTLTexture?
+    private var transitionSnapshotSize: CGSize = .zero
+    private var transitionSnapshotFrozen: Bool = false
 
     private var ringPool = SpectralRingPool(capacity: kMaxSpectralRings)
     private var ringGPUData = [SpectralRingGPUData](repeating: .zero, count: kMaxSpectralRings)
@@ -160,6 +168,12 @@ public final class MetalRendererService: RendererService {
     private var lastFractalFlowUpdateTime: CFTimeInterval?
     private var riemannAccentPool = RiemannAccentPool(capacity: kMaxRiemannAccents)
     private var riemannAccentGPUData = [RiemannAccentGPUData](repeating: .zero, count: kMaxRiemannAccents)
+    private var sharedParticlePool = SharedParticlePool(capacity: kMaxSharedParticles)
+    private var sharedParticleGPUData = [SharedParticleGPUData](repeating: .zero, count: kMaxSharedParticles)
+    private var sharedParticleGPUBuffer: MTLBuffer?
+    private var sharedParticleTargets: SharedParticleRenderTargets?
+    private var sharedParticleQuality = SharedParticleQualityProfile.cinematicHeavy
+    private var sharedParticleLastFrameTime: Float?
     private var riemannFlowPhase: Float = 0
     private var riemannCameraCenter = SIMD2<Float>(-0.8, 0.0)
     private var riemannCameraZoom: Float = 1.0
@@ -374,6 +388,7 @@ public final class MetalRendererService: RendererService {
             riemannCameraZoom: riemannCameraZoom,
             riemannCameraHeading: riemannCameraHeading
         )
+        uniforms.modeTransitionAlpha = modeTransitionAlpha(at: now)
 
         let radialFallbackActive = forceRadialFallbackUntil.map { now < $0 } ?? false
         let selectedPath = rendererPassSelection(
@@ -415,6 +430,19 @@ public final class MetalRendererService: RendererService {
                         diagnosticsSummary.statusMessage = "Custom patch encode failed"
                         return
                     }
+                    encodeSharedParticlePassesIfNeeded(
+                        commandBuffer: commandBuffer,
+                        drawable: drawable,
+                        uniforms: &uniforms,
+                        renderSize: renderSize,
+                        elapsedTime: elapsed
+                    )
+                    applyPostProcessingIfNeeded(
+                        commandBuffer: commandBuffer,
+                        drawable: drawable,
+                        uniforms: &uniforms,
+                        renderSize: renderSize
+                    )
                     emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                     prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                     commandBuffer.commit()
@@ -456,6 +484,19 @@ public final class MetalRendererService: RendererService {
                cameraTexture: cameraTextureBundle.texture
            ) {
             colorFeedbackTargets = feedbackTargets
+            encodeSharedParticlePassesIfNeeded(
+                commandBuffer: commandBuffer,
+                drawable: drawable,
+                uniforms: &uniforms,
+                renderSize: renderSize,
+                elapsedTime: elapsed
+            )
+            applyPostProcessingIfNeeded(
+                commandBuffer: commandBuffer,
+                drawable: drawable,
+                uniforms: &uniforms,
+                renderSize: renderSize
+            )
             emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
             prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID, retainedCameraTexture: cameraTextureBundle.backing)
             commandBuffer.commit()
@@ -466,7 +507,7 @@ public final class MetalRendererService: RendererService {
            let prismPipelines = pipelineStates.prism,
            let sampler = linearSampler,
            let device,
-           let targets = ensurePrismTargets(for: renderSize, device: device) {
+           var targets = ensurePrismTargets(for: renderSize, device: device) {
             spawnPrismImpulseIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let impulseCount = updatePrismImpulseGPUData(
                 elapsedTime: elapsed,
@@ -482,10 +523,23 @@ public final class MetalRendererService: RendererService {
                 drawable: drawable,
                 sampler: sampler,
                 pipelines: prismPipelines,
-                targets: targets,
+                targets: &targets,
                 uniforms: &uniforms
             ) {
                 prismTargets = targets
+                encodeSharedParticlePassesIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize,
+                    elapsedTime: elapsed
+                )
+                applyPostProcessingIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize
+                )
                 emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
@@ -499,7 +553,7 @@ public final class MetalRendererService: RendererService {
            let tunnelPipelines = pipelineStates.tunnel,
            let sampler = linearSampler,
            let device,
-           let targets = ensureTunnelTargets(for: renderSize, device: device) {
+           var targets = ensureTunnelTargets(for: renderSize, device: device) {
             spawnTunnelShapeIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let shapeCount = updateTunnelShapeGPUData(
                 controls: currentSurfaceState.controls,
@@ -519,10 +573,23 @@ public final class MetalRendererService: RendererService {
                 drawable: drawable,
                 sampler: sampler,
                 pipelines: tunnelPipelines,
-                targets: targets,
+                targets: &targets,
                 uniforms: &uniforms
             ) {
                 tunnelTargets = targets
+                encodeSharedParticlePassesIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize,
+                    elapsedTime: elapsed
+                )
+                applyPostProcessingIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize
+                )
                 emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
@@ -536,7 +603,7 @@ public final class MetalRendererService: RendererService {
            let fractalPipelines = pipelineStates.fractal,
            let sampler = linearSampler,
            let device,
-           let targets = ensureFractalTargets(for: renderSize, device: device) {
+           var targets = ensureFractalTargets(for: renderSize, device: device) {
             spawnFractalPulseIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let pulseCount = updateFractalPulseGPUData(
                 elapsedTime: elapsed,
@@ -552,10 +619,23 @@ public final class MetalRendererService: RendererService {
                 drawable: drawable,
                 sampler: sampler,
                 pipelines: fractalPipelines,
-                targets: targets,
+                targets: &targets,
                 uniforms: &uniforms
             ) {
                 fractalTargets = targets
+                encodeSharedParticlePassesIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize,
+                    elapsedTime: elapsed
+                )
+                applyPostProcessingIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize
+                )
                 emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
@@ -569,7 +649,7 @@ public final class MetalRendererService: RendererService {
            let riemannPipelines = pipelineStates.riemann,
            let sampler = linearSampler,
            let device,
-           let targets = ensureRiemannTargets(for: renderSize, device: device) {
+           var targets = ensureRiemannTargets(for: renderSize, device: device) {
             spawnRiemannAccentIfNeeded(controls: currentSurfaceState.controls, elapsedTime: elapsed)
             let accentCount = updateRiemannAccentGPUData(
                 elapsedTime: elapsed,
@@ -585,10 +665,23 @@ public final class MetalRendererService: RendererService {
                 drawable: drawable,
                 sampler: sampler,
                 pipelines: riemannPipelines,
-                targets: targets,
+                targets: &targets,
                 uniforms: &uniforms
             ) {
                 riemannTargets = targets
+                encodeSharedParticlePassesIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize,
+                    elapsedTime: elapsed
+                )
+                applyPostProcessingIfNeeded(
+                    commandBuffer: commandBuffer,
+                    drawable: drawable,
+                    uniforms: &uniforms,
+                    renderSize: renderSize
+                )
                 emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
                 prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
                 commandBuffer.commit()
@@ -612,6 +705,19 @@ public final class MetalRendererService: RendererService {
 
         commandBuffer.present(drawable)
 
+        encodeSharedParticlePassesIfNeeded(
+            commandBuffer: commandBuffer,
+            drawable: drawable,
+            uniforms: &uniforms,
+            renderSize: renderSize,
+            elapsedTime: elapsed
+        )
+        applyPostProcessingIfNeeded(
+            commandBuffer: commandBuffer,
+            drawable: drawable,
+            uniforms: &uniforms,
+            renderSize: renderSize
+        )
         emitProgramFrameIfNeeded(from: view, texture: drawable.texture, at: now)
         prepareCommandBufferForCommit(commandBuffer, drawableID: drawableID)
         commandBuffer.commit()
@@ -663,6 +769,19 @@ public final class MetalRendererService: RendererService {
             library: library,
             drawablePixelFormat: drawablePixelFormat
         )
+        let sharedParticle = try? makeSharedParticlePipelineStates(
+            device: device,
+            library: library,
+            drawablePixelFormat: drawablePixelFormat
+        )
+        let postProcess = try? makePipelineState(
+            device: device,
+            library: library,
+            vertexFunctionName: "renderer_fullscreen_vertex",
+            fragmentFunctionName: "renderer_postprocess_fragment",
+            colorPixelFormat: drawablePixelFormat,
+            label: "ChromaPostProcessPipeline"
+        )
         return RendererPipelineStates(
             radial: radial,
             spectral: spectral,
@@ -671,7 +790,9 @@ public final class MetalRendererService: RendererService {
             prism: prism,
             tunnel: tunnel,
             fractal: fractal,
-            riemann: riemann
+            riemann: riemann,
+            sharedParticle: sharedParticle,
+            postProcess: postProcess
         )
     }
 
@@ -939,6 +1060,47 @@ public final class MetalRendererService: RendererService {
         )
     }
 
+    private func makeSharedParticlePipelineStates(
+        device: MTLDevice,
+        library: MTLLibrary,
+        drawablePixelFormat: MTLPixelFormat
+    ) throws -> SharedParticlePipelineStates {
+        let particleField = try makePipelineState(
+            device: device,
+            library: library,
+            vertexFunctionName: "renderer_fullscreen_vertex",
+            fragmentFunctionName: "renderer_shared_particle_field_fragment",
+            colorPixelFormat: kSharedParticleIntermediatePixelFormat,
+            label: "ChromaSharedParticleFieldPipeline"
+        )
+
+        // Composite pipeline with additive blending onto drawable.
+        guard let vertexFunction = library.makeFunction(name: "renderer_fullscreen_vertex") else {
+            throw RendererBuildError.missingVertexFunction
+        }
+        guard let fragmentFunction = library.makeFunction(name: "renderer_shared_particle_composite_fragment") else {
+            throw RendererBuildError.missingFragmentFunction("renderer_shared_particle_composite_fragment")
+        }
+        let compositeDescriptor = MTLRenderPipelineDescriptor()
+        compositeDescriptor.vertexFunction = vertexFunction
+        compositeDescriptor.fragmentFunction = fragmentFunction
+        compositeDescriptor.colorAttachments[0].pixelFormat = drawablePixelFormat
+        compositeDescriptor.colorAttachments[0].isBlendingEnabled = true
+        compositeDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
+        compositeDescriptor.colorAttachments[0].destinationRGBBlendFactor = .one
+        compositeDescriptor.colorAttachments[0].rgbBlendOperation = .add
+        compositeDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        compositeDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .one
+        compositeDescriptor.colorAttachments[0].alphaBlendOperation = .add
+        compositeDescriptor.label = "ChromaSharedParticleCompositePipeline"
+        let composite = try device.makeRenderPipelineState(descriptor: compositeDescriptor)
+
+        return SharedParticlePipelineStates(
+            particleField: particleField,
+            composite: composite
+        )
+    }
+
     private func makePipelineState(
         device: MTLDevice,
         library: MTLLibrary,
@@ -1190,7 +1352,8 @@ public final class MetalRendererService: RendererService {
         guard
             let facetField = device.makeTexture(descriptor: descriptor),
             let dispersionField = device.makeTexture(descriptor: descriptor),
-            let accentField = device.makeTexture(descriptor: descriptor)
+            let accentField = device.makeTexture(descriptor: descriptor),
+            let feedbackHistory = device.makeTexture(descriptor: descriptor)
         else {
             prismTargets = nil
             return nil
@@ -1199,13 +1362,16 @@ public final class MetalRendererService: RendererService {
         facetField.label = "ChromaPrismFacetField"
         dispersionField.label = "ChromaPrismDispersionField"
         accentField.label = "ChromaPrismAccentField"
+        feedbackHistory.label = "ChromaPrismFeedbackHistory"
 
         let created = PrismRenderTargets(
             width: width,
             height: height,
             facetField: facetField,
             dispersionField: dispersionField,
-            accentField: accentField
+            accentField: accentField,
+            feedbackHistory: feedbackHistory,
+            hasFeedbackContent: false
         )
         prismTargets = created
         return created
@@ -1230,7 +1396,8 @@ public final class MetalRendererService: RendererService {
 
         guard
             let field = device.makeTexture(descriptor: descriptor),
-            let shapes = device.makeTexture(descriptor: descriptor)
+            let shapes = device.makeTexture(descriptor: descriptor),
+            let feedbackHistory = device.makeTexture(descriptor: descriptor)
         else {
             tunnelTargets = nil
             return nil
@@ -1238,12 +1405,15 @@ public final class MetalRendererService: RendererService {
 
         field.label = "ChromaTunnelField"
         shapes.label = "ChromaTunnelShapes"
+        feedbackHistory.label = "ChromaTunnelFeedbackHistory"
 
         let created = TunnelRenderTargets(
             width: width,
             height: height,
             field: field,
-            shapes: shapes
+            shapes: shapes,
+            feedbackHistory: feedbackHistory,
+            hasFeedbackContent: false
         )
         tunnelTargets = created
         return created
@@ -1268,7 +1438,8 @@ public final class MetalRendererService: RendererService {
 
         guard
             let field = device.makeTexture(descriptor: descriptor),
-            let accents = device.makeTexture(descriptor: descriptor)
+            let accents = device.makeTexture(descriptor: descriptor),
+            let feedbackHistory = device.makeTexture(descriptor: descriptor)
         else {
             fractalTargets = nil
             return nil
@@ -1276,12 +1447,15 @@ public final class MetalRendererService: RendererService {
 
         field.label = "ChromaFractalField"
         accents.label = "ChromaFractalAccents"
+        feedbackHistory.label = "ChromaFractalFeedbackHistory"
 
         let created = FractalRenderTargets(
             width: width,
             height: height,
             field: field,
-            accents: accents
+            accents: accents,
+            feedbackHistory: feedbackHistory,
+            hasFeedbackContent: false
         )
         fractalTargets = created
         return created
@@ -1306,7 +1480,8 @@ public final class MetalRendererService: RendererService {
 
         guard
             let field = device.makeTexture(descriptor: descriptor),
-            let accents = device.makeTexture(descriptor: descriptor)
+            let accents = device.makeTexture(descriptor: descriptor),
+            let feedbackHistory = device.makeTexture(descriptor: descriptor)
         else {
             riemannTargets = nil
             return nil
@@ -1314,14 +1489,50 @@ public final class MetalRendererService: RendererService {
 
         field.label = "ChromaRiemannField"
         accents.label = "ChromaRiemannAccents"
+        feedbackHistory.label = "ChromaRiemannFeedbackHistory"
 
         let created = RiemannRenderTargets(
             width: width,
             height: height,
             field: field,
-            accents: accents
+            accents: accents,
+            feedbackHistory: feedbackHistory,
+            hasFeedbackContent: false
         )
         riemannTargets = created
+        return created
+    }
+
+    private func ensureSharedParticleTargets(for size: CGSize, device: MTLDevice) -> SharedParticleRenderTargets? {
+        let width = max(Int(size.width.rounded()), 1)
+        let height = max(Int(size.height.rounded()), 1)
+
+        if let existing = sharedParticleTargets, existing.width == width, existing.height == height {
+            return existing
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: kSharedParticleIntermediatePixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.storageMode = .private
+        descriptor.usage = [.renderTarget, .shaderRead]
+
+        guard let particleField = device.makeTexture(descriptor: descriptor) else {
+            sharedParticleTargets = nil
+            return nil
+        }
+
+        particleField.label = "ChromaSharedParticleField"
+
+        let created = SharedParticleRenderTargets(
+            width: width,
+            height: height,
+            particleField: particleField
+        )
+        sharedParticleTargets = created
         return created
     }
 
@@ -1332,6 +1543,145 @@ public final class MetalRendererService: RendererService {
         descriptor.colorAttachments[0].storeAction = .store
         descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
         return descriptor
+    }
+
+    private func postProcessActive(controls: RendererControlState, transitionAlpha: Float) -> Bool {
+        transitionAlpha < 0.999
+            || controls.ppBloomIntensity > 0.001
+            || abs(controls.ppSaturation - 0.5) > 0.001
+            || abs(controls.ppContrast - 0.5) > 0.001
+            || abs(controls.ppTemperatureShift - 0.5) > 0.001
+            || controls.ppKaleidoscopeFold > 0.001
+    }
+
+    private func ensurePostProcessSceneTexture(for size: CGSize, pixelFormat: MTLPixelFormat, device: MTLDevice) -> MTLTexture? {
+        let width = max(Int(size.width.rounded()), 1)
+        let height = max(Int(size.height.rounded()), 1)
+
+        if let existing = postProcessSceneTexture,
+           Int(postProcessSceneSize.width.rounded()) == width,
+           Int(postProcessSceneSize.height.rounded()) == height {
+            return existing
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.storageMode = .private
+        descriptor.usage = [.renderTarget, .shaderRead]
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            postProcessSceneTexture = nil
+            return nil
+        }
+        texture.label = "ChromaPostProcessScene"
+        postProcessSceneTexture = texture
+        postProcessSceneSize = CGSize(width: width, height: height)
+        return texture
+    }
+
+    private func ensureTransitionSnapshotTexture(for size: CGSize, pixelFormat: MTLPixelFormat, device: MTLDevice) -> MTLTexture? {
+        let width = max(Int(size.width.rounded()), 1)
+        let height = max(Int(size.height.rounded()), 1)
+
+        if let existing = transitionSnapshotTexture,
+           Int(transitionSnapshotSize.width.rounded()) == width,
+           Int(transitionSnapshotSize.height.rounded()) == height {
+            return existing
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.storageMode = .private
+        descriptor.usage = [.renderTarget, .shaderRead]
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            transitionSnapshotTexture = nil
+            return nil
+        }
+        texture.label = "ChromaTransitionSnapshot"
+        transitionSnapshotTexture = texture
+        transitionSnapshotSize = CGSize(width: width, height: height)
+        return texture
+    }
+
+    private func blitDrawableToTransitionSnapshot(
+        commandBuffer: MTLCommandBuffer,
+        drawable: CAMetalDrawable,
+        snapshotTexture: MTLTexture
+    ) {
+        guard !transitionSnapshotFrozen else { return }
+        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { return }
+        let w = min(drawable.texture.width, snapshotTexture.width)
+        let h = min(drawable.texture.height, snapshotTexture.height)
+        blitEncoder.copy(
+            from: drawable.texture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: w, height: h, depth: 1),
+            to: snapshotTexture,
+            destinationSlice: 0,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+        blitEncoder.endEncoding()
+    }
+
+    private func encodePostProcessPass(
+        commandBuffer: MTLCommandBuffer,
+        drawable: CAMetalDrawable,
+        sampler: MTLSamplerState,
+        postProcessPipeline: MTLRenderPipelineState,
+        sceneTexture: MTLTexture,
+        transitionSnapshot: MTLTexture?,
+        uniforms: inout RendererFrameUniforms
+    ) -> Bool {
+        // Blit drawable → scene texture so we can read the rendered scene.
+        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
+            return false
+        }
+        let width = min(drawable.texture.width, sceneTexture.width)
+        let height = min(drawable.texture.height, sceneTexture.height)
+        blitEncoder.copy(
+            from: drawable.texture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: width, height: height, depth: 1),
+            to: sceneTexture,
+            destinationSlice: 0,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+        blitEncoder.endEncoding()
+
+        // Post-process pass: read scene texture, write to drawable.
+        let ppDescriptor = MTLRenderPassDescriptor()
+        ppDescriptor.colorAttachments[0].texture = drawable.texture
+        ppDescriptor.colorAttachments[0].loadAction = .dontCare
+        ppDescriptor.colorAttachments[0].storeAction = .store
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: ppDescriptor) else {
+            return false
+        }
+        encoder.setRenderPipelineState(postProcessPipeline)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(sceneTexture, index: 0)
+        if let snapshot = transitionSnapshot, uniforms.modeTransitionAlpha < 0.999 {
+            encoder.setFragmentTexture(snapshot, index: 1)
+        }
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        return true
     }
 
     private func encodeSpectralPasses(
@@ -1524,7 +1874,7 @@ public final class MetalRendererService: RendererService {
         drawable: CAMetalDrawable,
         sampler: MTLSamplerState,
         pipelines: PrismPipelineStates,
-        targets: PrismRenderTargets,
+        targets: inout PrismRenderTargets,
         uniforms: inout RendererFrameUniforms
     ) -> Bool {
         guard
@@ -1573,6 +1923,10 @@ public final class MetalRendererService: RendererService {
         accentsEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         accentsEncoder.endEncoding()
 
+        // Set feedback active flag so the shader knows the history texture has valid content.
+        let feedbackEnabled = uniforms.prismFeedbackMix > 0.001
+        uniforms.prismFeedbackActive = (feedbackEnabled && targets.hasFeedbackContent) ? 1 : 0
+
         drawableRenderPassDescriptor.colorAttachments[0].loadAction = .clear
         drawableRenderPassDescriptor.colorAttachments[0].storeAction = .store
         drawableRenderPassDescriptor.colorAttachments[0].clearColor = canvasClearColor
@@ -1587,9 +1941,31 @@ public final class MetalRendererService: RendererService {
         compositeEncoder.setFragmentTexture(targets.facetField, index: 0)
         compositeEncoder.setFragmentTexture(targets.dispersionField, index: 1)
         compositeEncoder.setFragmentTexture(targets.accentField, index: 2)
+        compositeEncoder.setFragmentTexture(targets.feedbackHistory, index: 3)
         compositeEncoder.setFragmentSamplerState(sampler, index: 0)
         compositeEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         compositeEncoder.endEncoding()
+
+        // Blit the composited drawable into feedback history for next frame.
+        if feedbackEnabled {
+            if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                let w = min(drawable.texture.width, targets.feedbackHistory.width)
+                let h = min(drawable.texture.height, targets.feedbackHistory.height)
+                blitEncoder.copy(
+                    from: drawable.texture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: w, height: h, depth: 1),
+                    to: targets.feedbackHistory,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blitEncoder.endEncoding()
+                targets.hasFeedbackContent = true
+            }
+        }
 
         commandBuffer.present(drawable)
         return true
@@ -1601,7 +1977,7 @@ public final class MetalRendererService: RendererService {
         drawable: CAMetalDrawable,
         sampler: MTLSamplerState,
         pipelines: TunnelPipelineStates,
-        targets: TunnelRenderTargets,
+        targets: inout TunnelRenderTargets,
         uniforms: inout RendererFrameUniforms
     ) -> Bool {
         guard
@@ -1644,13 +2020,37 @@ public final class MetalRendererService: RendererService {
         else {
             return false
         }
+        let tunnelFeedbackEnabled = uniforms.tunnelFeedbackMix > 0.001
+        uniforms.tunnelFeedbackActive = (tunnelFeedbackEnabled && targets.hasFeedbackContent) ? 1 : 0
+
         compositeEncoder.setRenderPipelineState(pipelines.composite)
         compositeEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
         compositeEncoder.setFragmentTexture(targets.field, index: 0)
         compositeEncoder.setFragmentTexture(targets.shapes, index: 1)
+        compositeEncoder.setFragmentTexture(targets.feedbackHistory, index: 2)
         compositeEncoder.setFragmentSamplerState(sampler, index: 0)
         compositeEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         compositeEncoder.endEncoding()
+
+        if tunnelFeedbackEnabled {
+            if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                let w = min(drawable.texture.width, targets.feedbackHistory.width)
+                let h = min(drawable.texture.height, targets.feedbackHistory.height)
+                blitEncoder.copy(
+                    from: drawable.texture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: w, height: h, depth: 1),
+                    to: targets.feedbackHistory,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blitEncoder.endEncoding()
+                targets.hasFeedbackContent = true
+            }
+        }
 
         commandBuffer.present(drawable)
         return true
@@ -1662,7 +2062,7 @@ public final class MetalRendererService: RendererService {
         drawable: CAMetalDrawable,
         sampler: MTLSamplerState,
         pipelines: FractalPipelineStates,
-        targets: FractalRenderTargets,
+        targets: inout FractalRenderTargets,
         uniforms: inout RendererFrameUniforms
     ) -> Bool {
         guard
@@ -1705,13 +2105,37 @@ public final class MetalRendererService: RendererService {
         else {
             return false
         }
+        let fractalFeedbackEnabled = uniforms.fractalFeedbackMix > 0.001
+        uniforms.fractalFeedbackActive = (fractalFeedbackEnabled && targets.hasFeedbackContent) ? 1 : 0
+
         compositeEncoder.setRenderPipelineState(pipelines.composite)
         compositeEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
         compositeEncoder.setFragmentTexture(targets.field, index: 0)
         compositeEncoder.setFragmentTexture(targets.accents, index: 1)
+        compositeEncoder.setFragmentTexture(targets.feedbackHistory, index: 2)
         compositeEncoder.setFragmentSamplerState(sampler, index: 0)
         compositeEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         compositeEncoder.endEncoding()
+
+        if fractalFeedbackEnabled {
+            if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                let w = min(drawable.texture.width, targets.feedbackHistory.width)
+                let h = min(drawable.texture.height, targets.feedbackHistory.height)
+                blitEncoder.copy(
+                    from: drawable.texture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: w, height: h, depth: 1),
+                    to: targets.feedbackHistory,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blitEncoder.endEncoding()
+                targets.hasFeedbackContent = true
+            }
+        }
 
         commandBuffer.present(drawable)
         return true
@@ -1723,7 +2147,7 @@ public final class MetalRendererService: RendererService {
         drawable: CAMetalDrawable,
         sampler: MTLSamplerState,
         pipelines: RiemannPipelineStates,
-        targets: RiemannRenderTargets,
+        targets: inout RiemannRenderTargets,
         uniforms: inout RendererFrameUniforms
     ) -> Bool {
         guard
@@ -1767,12 +2191,36 @@ public final class MetalRendererService: RendererService {
             return false
         }
         compositeEncoder.setRenderPipelineState(pipelines.composite)
+        let riemannFeedbackEnabled = uniforms.riemannFeedbackMix > 0.001
+        uniforms.riemannFeedbackActive = (riemannFeedbackEnabled && targets.hasFeedbackContent) ? 1 : 0
+
         compositeEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
         compositeEncoder.setFragmentTexture(targets.field, index: 0)
         compositeEncoder.setFragmentTexture(targets.accents, index: 1)
+        compositeEncoder.setFragmentTexture(targets.feedbackHistory, index: 2)
         compositeEncoder.setFragmentSamplerState(sampler, index: 0)
         compositeEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         compositeEncoder.endEncoding()
+
+        if riemannFeedbackEnabled {
+            if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                let w = min(drawable.texture.width, targets.feedbackHistory.width)
+                let h = min(drawable.texture.height, targets.feedbackHistory.height)
+                blitEncoder.copy(
+                    from: drawable.texture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: w, height: h, depth: 1),
+                    to: targets.feedbackHistory,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blitEncoder.endEncoding()
+                targets.hasFeedbackContent = true
+            }
+        }
 
         commandBuffer.present(drawable)
         return true
@@ -2507,6 +2955,236 @@ public final class MetalRendererService: RendererService {
         return UInt32(activeCount)
     }
 
+    // MARK: - Shared Particle System
+
+    private func spawnSharedParticleBurstIfNeeded(controls: RendererControlState, elapsedTime: Float) {
+        guard controls.isAttack else { return }
+
+        let attackStrength = Float(controls.attackStrength)
+        let burstCount = Int(mix(6, 24, min(max(attackStrength, 0.0), 1.0)))
+        let trailDecay = Float(controls.trailDecay)
+
+        let pitchConfidence = Float(controls.pitchConfidence)
+        let pitchClass = controls.stablePitchClass
+
+        sharedParticlePool.insertBurstIfNewAttack(
+            attackID: controls.attackID,
+            count: burstCount,
+            makeParticle: { burstIndex in
+                let seed = spectralHash(controls.attackID &+ UInt64(burstIndex))
+                let jA = (spectralHash01(seed) * 2) - 1
+                let jB = spectralHash01(seed ^ 0xA5A5_A5A5)
+                let jC = spectralHash01(seed ^ 0x5A5A_5A5A)
+
+                let angle = Float.pi * 2.0 * jA
+                let direction = SIMD2<Float>(cos(angle), sin(angle))
+                let speed = mix(Float(0.10), Float(0.72), jB) * mix(Float(0.6), Float(1.4), attackStrength)
+                let velocity = direction * speed
+
+                let spawnRadius: Float = 0.008 + jC * 0.032
+                let origin = SIMD2<Float>(Float(controls.centerOffset.x), Float(controls.centerOffset.y)) + direction * spawnRadius
+
+                let size = mix(Float(0.008), Float(0.036), jB)
+                let intensity = Float(0.36) + attackStrength * 0.78 + jC * 0.18
+
+                let hue: Float
+                if pitchConfidence > 0.6, let pc = pitchClass {
+                    hue = Float(pc) / 12.0 + jA * 0.04
+                } else {
+                    let sectorIndex = spectralBloomSectorIndex(
+                        attackID: controls.attackID,
+                        lowBandEnergy: controls.lowBandEnergy,
+                        midBandEnergy: controls.midBandEnergy,
+                        highBandEnergy: controls.highBandEnergy,
+                        sectorCount: 12
+                    )
+                    hue = Float(sectorIndex) / 12.0 + jA * 0.08
+                }
+
+                let lifetime = mix(Float(0.8), Float(3.0), trailDecay) * mix(Float(0.7), Float(1.3), jB)
+                let phase = jC * Float.pi * 2.0
+                let drag = mix(Float(0.3), Float(0.8), jB)
+
+                return SharedParticleEvent(
+                    birthTime: elapsedTime,
+                    position: origin,
+                    velocity: velocity,
+                    size: size,
+                    baseIntensity: intensity,
+                    hue: hue,
+                    lifetime: lifetime,
+                    phase: phase,
+                    drag: drag,
+                    isActive: true
+                )
+            }
+        )
+    }
+
+    private func updateSharedParticlePhysics(elapsedTime: Float, controls: RendererControlState) {
+        let lastTime = sharedParticleLastFrameTime ?? elapsedTime
+        let dt = min(elapsedTime - lastTime, 0.05)
+        sharedParticleLastFrameTime = elapsedTime
+
+        guard dt > 0.0001 else { return }
+
+        let lowBand = Float(controls.lowBandEnergy)
+        let midBand = Float(controls.midBandEnergy)
+        let highBand = Float(controls.highBandEnergy)
+        let gravity = SIMD2<Float>(0, -lowBand * 0.52)
+
+        for index in sharedParticlePool.events.indices {
+            guard sharedParticlePool.events[index].isActive else { continue }
+
+            let age = elapsedTime - sharedParticlePool.events[index].birthTime
+            if age < 0 || age >= sharedParticlePool.events[index].lifetime {
+                sharedParticlePool.events[index].isActive = false
+                continue
+            }
+
+            var vel = sharedParticlePool.events[index].velocity
+            let pos = sharedParticlePool.events[index].position
+            let drag = sharedParticlePool.events[index].drag
+
+            // Drag.
+            vel *= (1.0 - drag * dt)
+
+            // Curl noise flow field (sinusoidal approximation).
+            let curlStrength = midBand * 0.45
+            let noiseX = sin(pos.y * 6.0 + elapsedTime * 1.3) * curlStrength
+            let noiseY = cos(pos.x * 6.0 + elapsedTime * 0.95) * curlStrength
+            let curl = SIMD2<Float>(noiseX, noiseY)
+
+            // Radial repulsion from center.
+            let dist = max(length(pos), 0.01)
+            let repulsion = pos / dist * (0.06 / max(dist, 0.04))
+
+            // Orbital from mid-band.
+            let tangent = SIMD2<Float>(-pos.y, pos.x) / dist
+            let orbital = tangent * midBand * 0.28
+
+            // Shimmer / sparkle modulation from highBand.
+            let lifeProgress = age / max(sharedParticlePool.events[index].lifetime, 0.0001)
+            let decayCurve = pow(max(1 - lifeProgress, 0), Float(1.3))
+            let phase = sharedParticlePool.events[index].phase
+            let sparkle = 0.5 + 0.5 * sin(age * 18.0 + phase)
+            let sparkleAmount = highBand * 0.35
+            let intensity = sharedParticlePool.events[index].baseIntensity * decayCurve * (1.0 + sparkle * sparkleAmount)
+
+            vel += (gravity + curl + repulsion + orbital) * dt
+
+            sharedParticlePool.events[index].velocity = vel
+            sharedParticlePool.events[index].position = pos + vel * dt
+            sharedParticlePool.events[index].baseIntensity = sharedParticlePool.events[index].baseIntensity * (intensity > 0.001 ? 1 : 0)
+
+            if intensity <= 0.001 {
+                sharedParticlePool.events[index].isActive = false
+            }
+        }
+    }
+
+    private func updateSharedParticleGPUData(elapsedTime: Float, particleLimit: Int) -> UInt32 {
+        let activeLimit = max(1, min(particleLimit, kMaxSharedParticles))
+        var activeCount = 0
+
+        for index in sharedParticlePool.events.indices {
+            let event = sharedParticlePool.events[index]
+            guard event.isActive else { continue }
+
+            let age = elapsedTime - event.birthTime
+            if age < 0 || age >= event.lifetime {
+                sharedParticlePool.events[index].isActive = false
+                continue
+            }
+
+            let lifeProgress = age / max(event.lifetime, 0.0001)
+            let decayCurve = pow(max(1 - lifeProgress, 0), Float(1.3))
+            let intensity = event.baseIntensity * decayCurve
+
+            if intensity <= 0.001 {
+                sharedParticlePool.events[index].isActive = false
+                continue
+            }
+
+            if activeCount < activeLimit {
+                let size = max(event.size * (1 + lifeProgress * 1.2), 0.003)
+                sharedParticleGPUData[activeCount] = SharedParticleGPUData(
+                    positionSizeIntensity: SIMD4<Float>(event.position.x, event.position.y, size, intensity),
+                    velocityHueAge: SIMD4<Float>(event.velocity.x, event.velocity.y, event.hue - floor(event.hue), lifeProgress)
+                )
+                activeCount += 1
+            }
+        }
+
+        if activeCount < sharedParticleGPUData.count {
+            for index in activeCount ..< sharedParticleGPUData.count {
+                sharedParticleGPUData[index] = .zero
+            }
+        }
+
+        return UInt32(activeCount)
+    }
+
+    private func encodeSharedParticlePassesIfNeeded(
+        commandBuffer: MTLCommandBuffer,
+        drawable: CAMetalDrawable,
+        uniforms: inout RendererFrameUniforms,
+        renderSize: CGSize,
+        elapsedTime: Float
+    ) {
+        guard let device,
+              let sampler = linearSampler,
+              let pipelines = pipelineStates?.sharedParticle
+        else { return }
+
+        let controls = currentSurfaceState.controls
+        spawnSharedParticleBurstIfNeeded(controls: controls, elapsedTime: elapsedTime)
+        updateSharedParticlePhysics(elapsedTime: elapsedTime, controls: controls)
+        let activeCount = updateSharedParticleGPUData(
+            elapsedTime: elapsedTime,
+            particleLimit: sharedParticleQuality.activeParticleLimit
+        )
+
+        guard activeCount > 0 else { return }
+
+        uniforms.sharedParticleCount = activeCount
+
+        // Ensure GPU buffer.
+        let requiredLength = MemoryLayout<SharedParticleGPUData>.stride * kMaxSharedParticles
+        if sharedParticleGPUBuffer == nil || sharedParticleGPUBuffer!.length < requiredLength {
+            sharedParticleGPUBuffer = device.makeBuffer(length: requiredLength, options: .storageModeShared)
+            sharedParticleGPUBuffer?.label = "ChromaSharedParticleBuffer"
+        }
+
+        guard let gpuBuffer = sharedParticleGPUBuffer else { return }
+        memcpy(gpuBuffer.contents(), &sharedParticleGPUData, MemoryLayout<SharedParticleGPUData>.stride * Int(activeCount))
+
+        guard let targets = ensureSharedParticleTargets(for: renderSize, device: device) else { return }
+
+        // Pass 1: Render particle field to offscreen texture.
+        guard let fieldEncoder = commandBuffer.makeRenderCommandEncoder(
+            descriptor: makeOffscreenPassDescriptor(texture: targets.particleField)
+        ) else { return }
+        fieldEncoder.setRenderPipelineState(pipelines.particleField)
+        fieldEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<RendererFrameUniforms>.stride, index: 0)
+        fieldEncoder.setFragmentBuffer(gpuBuffer, offset: 0, index: 1)
+        fieldEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        fieldEncoder.endEncoding()
+
+        // Pass 2: Composite particle field onto drawable with additive blending.
+        let compositeDescriptor = MTLRenderPassDescriptor()
+        compositeDescriptor.colorAttachments[0].texture = drawable.texture
+        compositeDescriptor.colorAttachments[0].loadAction = .load
+        compositeDescriptor.colorAttachments[0].storeAction = .store
+
+        guard let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: compositeDescriptor) else { return }
+        compositeEncoder.setRenderPipelineState(pipelines.composite)
+        compositeEncoder.setFragmentTexture(targets.particleField, index: 0)
+        compositeEncoder.setFragmentSamplerState(sampler, index: 0)
+        compositeEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        compositeEncoder.endEncoding()
+    }
+
     private func presentFallbackFrame(
         commandQueue: MTLCommandQueue,
         renderPassDescriptor: MTLRenderPassDescriptor,
@@ -2559,6 +3237,50 @@ public final class MetalRendererService: RendererService {
         sink.consumeProgramFrame(texture: texture, hostTime: hostTime)
     }
 
+    private func applyPostProcessingIfNeeded(
+        commandBuffer: MTLCommandBuffer,
+        drawable: CAMetalDrawable,
+        uniforms: inout RendererFrameUniforms,
+        renderSize: CGSize
+    ) {
+        guard let device else { return }
+
+        // Maintain transition snapshot: blit current drawable every frame (unless frozen).
+        if let snapshotTexture = ensureTransitionSnapshotTexture(
+            for: renderSize,
+            pixelFormat: drawable.texture.pixelFormat,
+            device: device
+        ) {
+            blitDrawableToTransitionSnapshot(
+                commandBuffer: commandBuffer,
+                drawable: drawable,
+                snapshotTexture: snapshotTexture
+            )
+        }
+
+        guard postProcessActive(controls: currentSurfaceState.controls, transitionAlpha: uniforms.modeTransitionAlpha),
+              let ppPipeline = pipelineStates?.postProcess,
+              let sampler = linearSampler,
+              let sceneTexture = ensurePostProcessSceneTexture(
+                  for: renderSize,
+                  pixelFormat: drawable.texture.pixelFormat,
+                  device: device
+              )
+        else { return }
+
+        let snapshot: MTLTexture? = (uniforms.modeTransitionAlpha < 0.999) ? transitionSnapshotTexture : nil
+
+        _ = encodePostProcessPass(
+            commandBuffer: commandBuffer,
+            drawable: drawable,
+            sampler: sampler,
+            postProcessPipeline: ppPipeline,
+            sceneTexture: sceneTexture,
+            transitionSnapshot: snapshot,
+            uniforms: &uniforms
+        )
+    }
+
     private func prepareCommandBufferForCommit(
         _ commandBuffer: MTLCommandBuffer,
         drawableID: ObjectIdentifier,
@@ -2601,6 +3323,7 @@ public final class MetalRendererService: RendererService {
                     self.tunnelTargets = nil
                     self.fractalTargets = nil
                     self.riemannTargets = nil
+                    self.sharedParticleTargets = nil
                     self.lastPipelineRetryTime = nil
                     _ = self.degradeActiveModeQuality(reason: "GPU errors")
                 }
@@ -2768,6 +3491,8 @@ public final class MetalRendererService: RendererService {
             prismDispersionSampleCount: prismDispersionSampleCount,
             prismImpulseCount: prismImpulseCount,
             prismBlackout: prismBlackout ? 1 : 0,
+            prismFeedbackMix: Float(controls.prismFeedbackMix),
+            prismFeedbackActive: 0,
             tunnelShapeScale: Float(controls.tunnelShapeScale),
             tunnelDepthSpeed: Float(controls.tunnelDepthSpeed),
             tunnelReleaseTail: Float(controls.tunnelReleaseTail),
@@ -2806,7 +3531,23 @@ public final class MetalRendererService: RendererService {
             stablePitchCents: Float(controls.stablePitchCents),
             attackIDLow: attackIDLow,
             attackIDHigh: attackIDHigh,
-            padding3: controls.isLightAppearance ? 1 : 0
+            padding3: controls.isLightAppearance ? 1 : 0,
+            ppBloomIntensity: Float(controls.ppBloomIntensity),
+            ppBloomThreshold: Float(controls.ppBloomThreshold),
+            ppBloomRadius: Float(controls.ppBloomRadius),
+            ppSaturation: Float(controls.ppSaturation),
+            ppContrast: Float(controls.ppContrast),
+            ppTemperatureShift: Float(controls.ppTemperatureShift),
+            ppKaleidoscopeFold: UInt32(min(max(Int(controls.ppKaleidoscopeFold.rounded()), 0), 4)),
+            modeTransitionAlpha: 1.0,
+            sharedParticleCount: 0,
+            tunnelFeedbackMix: Float(controls.tunnelFeedbackMix),
+            tunnelFeedbackActive: 0,
+            fractalFeedbackMix: Float(controls.fractalFeedbackMix),
+            fractalFeedbackActive: 0,
+            riemannFeedbackMix: Float(controls.riemannFeedbackMix),
+            riemannFeedbackActive: 0,
+            fieldSymmetryFold: UInt32(min(max(Int(controls.fieldSymmetryFold.rounded()), 0), 8))
         )
     }
 
@@ -3202,6 +3943,7 @@ public final class MetalRendererService: RendererService {
             tunnelQuality = .cinematicHeavy
             fractalQuality = .cinematicHeavy
             riemannQuality = .cinematicHeavy
+            sharedParticleQuality = .cinematicHeavy
         case .safeFPS:
             spectralQuality = .safeFPS
             attackParticleQuality = .safeFPS
@@ -3209,6 +3951,7 @@ public final class MetalRendererService: RendererService {
             tunnelQuality = .safeFPS
             fractalQuality = .safeFPS
             riemannQuality = .safeFPS
+            sharedParticleQuality = .safeFPS
         }
 
         diagnosticsSummary.statusMessage = {
@@ -3253,6 +3996,8 @@ public final class MetalRendererService: RendererService {
 private extension MetalRendererService {
     func handleModeTransition(from oldMode: VisualModeID, to newMode: VisualModeID) {
         guard oldMode != newMode else { return }
+        modeTransitionStartTime = CACurrentMediaTime()
+        transitionSnapshotFrozen = true
         if oldMode == .tunnelCels || newMode == .tunnelCels {
             tunnelLastSyntheticEvidence = 0
             tunnelLastSyntheticSpawnTime = -.greatestFiniteMagnitude
@@ -3270,6 +4015,20 @@ private extension MetalRendererService {
             }
         }
     }
+
+    private func modeTransitionAlpha(at now: CFTimeInterval) -> Float {
+        guard let startTime = modeTransitionStartTime else { return 1.0 }
+        let elapsed = now - startTime
+        let duration = Self.modeTransitionDuration
+        if elapsed >= duration {
+            modeTransitionStartTime = nil
+            transitionSnapshotFrozen = false
+            return 1.0
+        }
+        // Crossfade: cosine ease (0 → 1). 0 = fully old mode, 1 = fully new mode.
+        let progress = Float(elapsed / duration)
+        return (1.0 - cos(progress * Float.pi)) * 0.5
+    }
 }
 
 private let kMaxSpectralRings = 48
@@ -3285,6 +4044,8 @@ private let kMaxFractalPulses = 32
 private let kFractalIntermediatePixelFormat: MTLPixelFormat = .rgba16Float
 private let kMaxRiemannAccents = 24
 private let kRiemannIntermediatePixelFormat: MTLPixelFormat = .rgba16Float
+private let kMaxSharedParticles = 256
+private let kSharedParticleIntermediatePixelFormat: MTLPixelFormat = .rgba16Float
 
 private struct SpectralPipelineStates {
     var ringField: MTLRenderPipelineState
@@ -3330,6 +4091,11 @@ private struct RiemannPipelineStates {
     var composite: MTLRenderPipelineState
 }
 
+private struct SharedParticlePipelineStates {
+    var particleField: MTLRenderPipelineState
+    var composite: MTLRenderPipelineState
+}
+
 private struct RendererPipelineStates {
     var radial: MTLRenderPipelineState
     var spectral: SpectralPipelineStates?
@@ -3339,6 +4105,8 @@ private struct RendererPipelineStates {
     var tunnel: TunnelPipelineStates?
     var fractal: FractalPipelineStates?
     var riemann: RiemannPipelineStates?
+    var sharedParticle: SharedParticlePipelineStates?
+    var postProcess: MTLRenderPipelineState?
 }
 
 private struct SpectralRenderTargets {
@@ -3371,6 +4139,8 @@ private struct PrismRenderTargets {
     var facetField: MTLTexture
     var dispersionField: MTLTexture
     var accentField: MTLTexture
+    var feedbackHistory: MTLTexture
+    var hasFeedbackContent: Bool
 }
 
 private struct TunnelRenderTargets {
@@ -3378,6 +4148,8 @@ private struct TunnelRenderTargets {
     var height: Int
     var field: MTLTexture
     var shapes: MTLTexture
+    var feedbackHistory: MTLTexture
+    var hasFeedbackContent: Bool
 }
 
 private struct FractalRenderTargets {
@@ -3385,6 +4157,8 @@ private struct FractalRenderTargets {
     var height: Int
     var field: MTLTexture
     var accents: MTLTexture
+    var feedbackHistory: MTLTexture
+    var hasFeedbackContent: Bool
 }
 
 private struct RiemannRenderTargets {
@@ -3392,6 +4166,14 @@ private struct RiemannRenderTargets {
     var height: Int
     var field: MTLTexture
     var accents: MTLTexture
+    var feedbackHistory: MTLTexture
+    var hasFeedbackContent: Bool
+}
+
+private struct SharedParticleRenderTargets {
+    var width: Int
+    var height: Int
+    var particleField: MTLTexture
 }
 
 private enum RendererPerformanceMode: Equatable {
@@ -3599,6 +4381,25 @@ private struct RiemannQualityProfile {
     }
 }
 
+private struct SharedParticleQualityProfile {
+    var activeParticleLimit: Int
+
+    static let cinematicHeavy = SharedParticleQualityProfile(activeParticleLimit: 256)
+    static let safeFPS = SharedParticleQualityProfile(activeParticleLimit: 128)
+
+    mutating func degrade() -> Bool {
+        if activeParticleLimit > 192 {
+            activeParticleLimit = 192
+            return true
+        }
+        if activeParticleLimit > 128 {
+            activeParticleLimit = 128
+            return true
+        }
+        return false
+    }
+}
+
 private struct SpectralRingGPUData {
     var positionRadiusWidthIntensity: SIMD4<Float>
     var hueDecaySectorActive: SIMD4<Float>
@@ -3663,6 +4464,16 @@ private struct RiemannAccentGPUData {
     )
 }
 
+private struct SharedParticleGPUData {
+    var positionSizeIntensity: SIMD4<Float>
+    var velocityHueAge: SIMD4<Float>
+
+    static let zero = SharedParticleGPUData(
+        positionSizeIntensity: .zero,
+        velocityHueAge: .zero
+    )
+}
+
 private struct RendererFrameUniforms {
     // Keep this prefix stable for compatibility with fallback radial shader source.
     var time: Float
@@ -3696,6 +4507,8 @@ private struct RendererFrameUniforms {
     var prismDispersionSampleCount: UInt32
     var prismImpulseCount: UInt32
     var prismBlackout: UInt32
+    var prismFeedbackMix: Float
+    var prismFeedbackActive: UInt32
     var tunnelShapeScale: Float
     var tunnelDepthSpeed: Float
     var tunnelReleaseTail: Float
@@ -3740,6 +4553,32 @@ private struct RendererFrameUniforms {
     var attackIDHigh: UInt32
     var padding2: UInt32 = 0
     var padding3: UInt32 = 0
+
+    // Post-processing uniforms.
+    var ppBloomIntensity: Float
+    var ppBloomThreshold: Float
+    var ppBloomRadius: Float
+    var ppSaturation: Float
+    var ppContrast: Float
+    var ppTemperatureShift: Float
+    var ppKaleidoscopeFold: UInt32
+    var modeTransitionAlpha: Float
+
+    // Shared particle system.
+    var sharedParticleCount: UInt32
+    var sharedParticlePadding: UInt32 = 0
+
+    // Temporal feedback for Tunnel/Fractal/Riemann.
+    var tunnelFeedbackMix: Float
+    var tunnelFeedbackActive: UInt32
+    var fractalFeedbackMix: Float
+    var fractalFeedbackActive: UInt32
+    var riemannFeedbackMix: Float
+    var riemannFeedbackActive: UInt32
+
+    // Per-mode field symmetry.
+    var fieldSymmetryFold: UInt32
+    var fieldSymmetryPadding: UInt32 = 0
 }
 
 private enum RendererBuildError: LocalizedError {
@@ -4288,6 +5127,68 @@ public struct RiemannAccentPool {
         event.isActive = true
         events[insertionCursor] = event
         insertionCursor = (insertionCursor + 1) % capacity
+        return true
+    }
+}
+
+public struct SharedParticleEvent: Equatable {
+    public var birthTime: Float
+    public var position: SIMD2<Float>
+    public var velocity: SIMD2<Float>
+    public var size: Float
+    public var baseIntensity: Float
+    public var hue: Float
+    public var lifetime: Float
+    public var phase: Float
+    public var drag: Float
+    public var isActive: Bool
+
+    public static let inactive = SharedParticleEvent(
+        birthTime: 0,
+        position: .zero,
+        velocity: .zero,
+        size: 0,
+        baseIntensity: 0,
+        hue: 0,
+        lifetime: 0,
+        phase: 0,
+        drag: 0.6,
+        isActive: false
+    )
+}
+
+public struct SharedParticlePool {
+    public private(set) var capacity: Int
+    public internal(set) var events: [SharedParticleEvent]
+    public private(set) var insertionCursor: Int
+    public private(set) var lastAttackID: UInt64
+
+    public init(capacity: Int = 256) {
+        let resolvedCapacity = max(1, capacity)
+        self.capacity = resolvedCapacity
+        self.events = [SharedParticleEvent](repeating: .inactive, count: resolvedCapacity)
+        self.insertionCursor = 0
+        self.lastAttackID = 0
+    }
+
+    @discardableResult
+    public mutating func insertBurstIfNewAttack(
+        attackID: UInt64,
+        count: Int,
+        makeParticle: (_ burstIndex: Int) -> SharedParticleEvent
+    ) -> Bool {
+        guard attackID > 0, attackID != lastAttackID else {
+            return false
+        }
+
+        lastAttackID = attackID
+        let resolvedCount = max(1, count)
+        for burstIndex in 0 ..< resolvedCount {
+            var particle = makeParticle(burstIndex)
+            particle.isActive = true
+            events[insertionCursor] = particle
+            insertionCursor = (insertionCursor + 1) % capacity
+        }
         return true
     }
 }
@@ -6241,6 +7142,8 @@ struct RendererFrameUniforms {
     uint prismDispersionSampleCount;
     uint prismImpulseCount;
     uint prismBlackout;
+    float prismFeedbackMix;
+    uint prismFeedbackActive;
     float tunnelShapeScale;
     float tunnelDepthSpeed;
     float tunnelReleaseTail;
@@ -6285,6 +7188,32 @@ struct RendererFrameUniforms {
     uint attackIDHigh;
     uint padding2;
     uint padding3;
+
+    // Post-processing uniforms.
+    float ppBloomIntensity;
+    float ppBloomThreshold;
+    float ppBloomRadius;
+    float ppSaturation;
+    float ppContrast;
+    float ppTemperatureShift;
+    uint ppKaleidoscopeFold;
+    float modeTransitionAlpha;
+
+    // Shared particle system.
+    uint sharedParticleCount;
+    uint sharedParticlePadding;
+
+    // Temporal feedback for Tunnel/Fractal/Riemann.
+    float tunnelFeedbackMix;
+    uint tunnelFeedbackActive;
+    float fractalFeedbackMix;
+    uint fractalFeedbackActive;
+    float riemannFeedbackMix;
+    uint riemannFeedbackActive;
+
+    // Per-mode field symmetry.
+    uint fieldSymmetryFold;
+    uint fieldSymmetryPadding;
 };
 
 vertex VertexOut renderer_fullscreen_vertex(uint vertexID [[vertex_id]]) {

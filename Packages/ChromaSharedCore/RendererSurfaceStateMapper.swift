@@ -67,6 +67,18 @@ public struct RendererSurfaceStateMapper {
             parameterStore: parameterStore,
             fallback: 0.62
         )
+        let prismFeedbackMix = scalarValue(
+            parameterID: "mode.prismField.feedbackMix",
+            scope: .mode(.prismField),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
+        let tunnelFeedbackMix = scalarValue(
+            parameterID: "mode.tunnelCels.feedbackMix",
+            scope: .mode(.tunnelCels),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
         let tunnelShapeScale = scalarValue(
             parameterID: "mode.tunnelCels.shapeScale",
             scope: .mode(.tunnelCels),
@@ -117,6 +129,12 @@ public struct RendererSurfaceStateMapper {
             fallback: 0
         )
         let fractalPaletteVariant = min(max(Double(Int(fractalPaletteRaw.rounded())), 0), 7)
+        let fractalFeedbackMix = scalarValue(
+            parameterID: "mode.fractalCaustics.feedbackMix",
+            scope: .mode(.fractalCaustics),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
         let riemannDetail = scalarValue(
             parameterID: "mode.riemannCorridor.detail",
             scope: .mode(.riemannCorridor),
@@ -155,9 +173,60 @@ public struct RendererSurfaceStateMapper {
             fallback: 0
         )
         let riemannPaletteVariant = min(max(Double(Int(riemannPaletteRaw.rounded())), 0), 7)
+        let riemannFeedbackMix = scalarValue(
+            parameterID: "mode.riemannCorridor.feedbackMix",
+            scope: .mode(.riemannCorridor),
+            parameterStore: parameterStore,
+            fallback: 0.0
+        )
+
+        // Per-mode field symmetry fold: read from active mode's parameter.
+        let symmetryFoldParamID: String
+        let symmetryFoldScope: ParameterScope
+        switch session.activeModeID {
+        case .colorShift:
+            symmetryFoldParamID = "mode.colorShift.symmetryFold"
+            symmetryFoldScope = .mode(.colorShift)
+        case .prismField:
+            symmetryFoldParamID = "mode.prismField.symmetryFold"
+            symmetryFoldScope = .mode(.prismField)
+        case .tunnelCels:
+            symmetryFoldParamID = "mode.tunnelCels.symmetryFold"
+            symmetryFoldScope = .mode(.tunnelCels)
+        case .fractalCaustics:
+            symmetryFoldParamID = "mode.fractalCaustics.symmetryFold"
+            symmetryFoldScope = .mode(.fractalCaustics)
+        case .riemannCorridor:
+            symmetryFoldParamID = "mode.riemannCorridor.symmetryFold"
+            symmetryFoldScope = .mode(.riemannCorridor)
+        case .custom:
+            symmetryFoldParamID = ""
+            symmetryFoldScope = .global
+        }
+        let fieldSymmetryFoldRaw: Double
+        if symmetryFoldParamID.isEmpty {
+            fieldSymmetryFoldRaw = 0
+        } else {
+            fieldSymmetryFoldRaw = scalarValue(
+                parameterID: symmetryFoldParamID,
+                scope: symmetryFoldScope,
+                parameterStore: parameterStore,
+                fallback: 0.0
+            )
+        }
+        let fieldSymmetryFold = min(max(Double(Int(fieldSymmetryFoldRaw.rounded())), 0), 8)
+
         let performanceModeIndex = self.performanceModeIndex(for: performanceModeOverride ?? session.performanceSettings.mode)
         let silenceGateThreshold = session.audioCalibrationSettings.silenceGateThreshold
         let noImageInSilence = parameterStore.value(for: "output.noImageInSilence", scope: .global)?.toggleValue ?? false
+        let ppBloomIntensity = scalarValue(parameterID: "postProcess.bloomIntensity", scope: .global, parameterStore: parameterStore, fallback: 0.0)
+        let ppBloomThreshold = scalarValue(parameterID: "postProcess.bloomThreshold", scope: .global, parameterStore: parameterStore, fallback: 0.72)
+        let ppBloomRadius = scalarValue(parameterID: "postProcess.bloomRadius", scope: .global, parameterStore: parameterStore, fallback: 0.42)
+        let ppSaturation = scalarValue(parameterID: "postProcess.saturation", scope: .global, parameterStore: parameterStore, fallback: 0.5)
+        let ppContrast = scalarValue(parameterID: "postProcess.contrast", scope: .global, parameterStore: parameterStore, fallback: 0.5)
+        let ppTemperatureShift = scalarValue(parameterID: "postProcess.temperatureShift", scope: .global, parameterStore: parameterStore, fallback: 0.5)
+        let ppKaleidoscopeFoldRaw = scalarValue(parameterID: "postProcess.kaleidoscopeFold", scope: .global, parameterStore: parameterStore, fallback: 0.0)
+        let ppKaleidoscopeFold = min(max(Double(Int(ppKaleidoscopeFoldRaw.rounded())), 0), 4)
 
         let scale: Double
         let motion: Double
@@ -230,6 +299,7 @@ public struct RendererSurfaceStateMapper {
                 lensSheen: 0.54,
                 prismFacetDensity: prismFacetDensity,
                 prismDispersion: prismDispersion,
+                prismFeedbackMix: prismFeedbackMix,
                 tunnelShapeScale: tunnelShapeScale,
                 tunnelDepthSpeed: tunnelDepthSpeed,
                 tunnelReleaseTail: tunnelReleaseTail,
@@ -244,6 +314,10 @@ public struct RendererSurfaceStateMapper {
                 riemannNavigationMode: riemannNavigationMode,
                 riemannSteeringStrength: riemannSteeringStrength,
                 riemannPaletteVariant: riemannPaletteVariant,
+                tunnelFeedbackMix: tunnelFeedbackMix,
+                fractalFeedbackMix: fractalFeedbackMix,
+                riemannFeedbackMix: riemannFeedbackMix,
+                fieldSymmetryFold: fieldSymmetryFold,
                 performanceModeIndex: performanceModeIndex,
                 silenceGateThreshold: silenceGateThreshold,
                 featureAmplitude: featureAmplitude,
@@ -266,6 +340,13 @@ public struct RendererSurfaceStateMapper {
                 colorFeedbackEnabled: colorFeedbackEnabled,
                 colorFeedbackBlackout: colorFeedbackBlackout,
                 isLightAppearance: session.outputState.glassAppearanceStyle == .light,
+                ppBloomIntensity: ppBloomIntensity,
+                ppBloomThreshold: ppBloomThreshold,
+                ppBloomRadius: ppBloomRadius,
+                ppSaturation: ppSaturation,
+                ppContrast: ppContrast,
+                ppTemperatureShift: ppTemperatureShift,
+                ppKaleidoscopeFold: ppKaleidoscopeFold,
                 centerOffset: centerOffset
             ).clamped()
         )

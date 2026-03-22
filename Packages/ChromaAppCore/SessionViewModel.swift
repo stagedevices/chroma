@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Combine
 
 @MainActor
@@ -72,6 +73,15 @@ public final class SessionViewModel: ObservableObject {
     @Published public private(set) var patchClipboard: CustomPatchClipboard?
     @Published public private(set) var canUndoPatch: Bool = false
     @Published public private(set) var canRedoPatch: Bool = false
+    
+    private static let factoryPresetNamesByMode: [VisualModeID: Set<String>] = [
+        .colorShift: ["Stage Color"],
+        .prismField: ["Prism Nocturne"],
+        .tunnelCels: ["Tunnel Drive"],
+        .fractalCaustics: ["Fractal Aurora"],
+        .riemannCorridor: ["Mandelbrot Boundary Run"],
+        .custom: ["Breathing Fractal", "Particle Nebula", "Crystal Lattice"],
+    ]
 
     public init(
         session: ChromaSession,
@@ -252,6 +262,18 @@ public final class SessionViewModel: ObservableObject {
 
     public var presetsForActiveMode: [Preset] {
         presets.filter { $0.modeID == session.activeModeID }
+    }
+    
+    public var userCreatedPresetCountForActiveMode: Int {
+        userCreatedPresetCount(for: session.activeModeID)
+    }
+
+    public var freePresetSaveLimitReached: Bool {
+        userCreatedPresetCountForActiveMode >= 1
+    }
+
+    public func isFactoryPreset(_ preset: Preset) -> Bool {
+        Self.factoryPresetNamesByMode[preset.modeID]?.contains(preset.name) ?? false
     }
 
     public var customPatches: [CustomPatch] {
@@ -482,6 +504,97 @@ public final class SessionViewModel: ObservableObject {
         } catch {
             return
         }
+    }
+
+    // MARK: - Cue Set Management
+
+    public func createPerformanceSet(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let set = PerformanceSet(name: trimmed)
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func renamePerformanceSet(id: UUID, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard var set = performanceSets.first(where: { $0.id == id }) else { return }
+        set.name = trimmed
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func deletePerformanceSet(id: UUID) {
+        do {
+            try setlistService.deleteSet(id: id)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func addCue(
+        to setID: UUID,
+        name: String,
+        presetID: UUID?,
+        delayFromPrevious: TimeInterval = 0,
+        transitionDuration: TimeInterval = 0
+    ) {
+        guard var set = performanceSets.first(where: { $0.id == setID }) else { return }
+        let cue = PerformanceCue(
+            name: name,
+            presetID: presetID,
+            delayFromPrevious: delayFromPrevious,
+            transitionDuration: transitionDuration
+        )
+        set.cues.append(cue)
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func addCueFromActivePreset(to setID: UUID) {
+        guard let activePresetID = session.activePresetID else { return }
+        let presetName = session.activePresetName
+        addCue(to: setID, name: presetName, presetID: activePresetID)
+    }
+
+    public func updateCue(in setID: UUID, cue: PerformanceCue) {
+        guard var set = performanceSets.first(where: { $0.id == setID }) else { return }
+        guard let index = set.cues.firstIndex(where: { $0.id == cue.id }) else { return }
+        set.cues[index] = cue
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func deleteCue(from setID: UUID, cueID: UUID) {
+        guard var set = performanceSets.first(where: { $0.id == setID }) else { return }
+        set.cues.removeAll(where: { $0.id == cueID })
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func reorderCues(in setID: UUID, fromOffsets: IndexSet, toOffset: Int) {
+        guard var set = performanceSets.first(where: { $0.id == setID }) else { return }
+        set.cues.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        do {
+            try setlistService.saveSet(set)
+            refreshPerformanceSetsFromStore()
+        } catch { }
+    }
+
+    public func fireCue(_ cue: PerformanceCue) {
+        guard let presetID = cue.presetID,
+              let preset = presets.first(where: { $0.id == presetID }) else { return }
+        applyPreset(preset)
     }
 
     public func cycleTunnelVariant() {
@@ -806,6 +919,58 @@ public final class SessionViewModel: ObservableObject {
         externalDisplayCoordinator.selectDisplayTarget(id: id)
         session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
         session.availableDisplayTargets = externalDisplayCoordinator.targets
+        scheduleSessionAutosave()
+    }
+    
+    public func reconcileRecoveredProAccess(hasProAccess: Bool) {
+        guard !hasProAccess else { return }
+
+        var didChange = false
+
+        if ProEntitlement.requiresPro(.mode(session.activeModeID)) {
+            session.activeModeID = .colorShift
+            session.activePresetID = nil
+            session.activePresetName = "Unsaved Session"
+            applyModeDefaultsIfAvailable(for: .colorShift)
+            clearPresetBaseline()
+            didChange = true
+        }
+
+        if let sourceModeID = session.morphState.sourceModeID,
+           ProEntitlement.requiresPro(.mode(sourceModeID)) {
+            session.morphState = VisualMorphState()
+            didChange = true
+        }
+
+        if let destinationModeID = session.morphState.destinationModeID,
+           ProEntitlement.requiresPro(.mode(destinationModeID)) {
+            session.morphState = VisualMorphState()
+            didChange = true
+        }
+
+        if let activePresetID = session.activePresetID,
+           let activePreset = presets.first(where: { $0.id == activePresetID }),
+           ProEntitlement.requiresPro(.mode(activePreset.modeID)) {
+            session.activePresetID = nil
+            session.activePresetName = "Unsaved Session"
+            clearPresetBaseline()
+            didChange = true
+        }
+
+        if session.outputState.selectedDisplayTargetID == "external" {
+            externalDisplayCoordinator.selectDisplayTarget(id: "device")
+            session.outputState.selectedDisplayTargetID = externalDisplayCoordinator.selectedTargetID
+            session.availableDisplayTargets = externalDisplayCoordinator.targets
+            didChange = true
+        }
+
+        guard didChange else { return }
+
+        if session.activeModeID != .colorShift {
+            stopColorFeedbackCapture()
+        }
+        syncPresetDirtyState()
+        syncRendererState()
         scheduleSessionAutosave()
     }
 
@@ -1254,6 +1419,10 @@ public final class SessionViewModel: ObservableObject {
         presets = presetService.loadPresets()
     }
 
+    private func refreshPerformanceSetsFromStore() {
+        performanceSets = setlistService.loadSets()
+    }
+
     private func snapshotForActiveModePreset() -> [ScopedParameterValue] {
         snapshotForPresetComparison(modeID: session.activeModeID)
     }
@@ -1279,6 +1448,13 @@ public final class SessionViewModel: ObservableObject {
         activePresetBaselineModeID = nil
         activePresetBaselineValues = nil
         isActivePresetModified = false
+    }
+    
+    private func userCreatedPresetCount(for modeID: VisualModeID) -> Int {
+        presets
+            .filter { $0.modeID == modeID }
+            .filter { !(Self.factoryPresetNamesByMode[modeID]?.contains($0.name) ?? false) }
+            .count
     }
 
     private func syncPresetDirtyState() {

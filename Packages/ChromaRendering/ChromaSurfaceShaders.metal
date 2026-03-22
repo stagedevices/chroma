@@ -7,6 +7,7 @@ constant uint kMaxPrismImpulses = 32;
 constant uint kMaxTunnelShapes = 64;
 constant uint kMaxFractalPulses = 32;
 constant uint kMaxRiemannAccents = 24;
+constant uint kMaxSharedParticles = 256;
 constant float kPi = 3.14159265358979323846;
 
 struct VertexOut {
@@ -45,6 +46,8 @@ struct RendererFrameUniforms {
     uint prismDispersionSampleCount;
     uint prismImpulseCount;
     uint prismBlackout;
+    float prismFeedbackMix;
+    uint prismFeedbackActive;
     float tunnelShapeScale;
     float tunnelDepthSpeed;
     float tunnelReleaseTail;
@@ -89,6 +92,32 @@ struct RendererFrameUniforms {
     uint attackIDHigh;
     uint padding2;
     uint padding3;
+
+    // Post-processing uniforms.
+    float ppBloomIntensity;
+    float ppBloomThreshold;
+    float ppBloomRadius;
+    float ppSaturation;
+    float ppContrast;
+    float ppTemperatureShift;
+    uint ppKaleidoscopeFold;
+    float modeTransitionAlpha;
+
+    // Shared particle system.
+    uint sharedParticleCount;
+    uint sharedParticlePadding;
+
+    // Temporal feedback for Tunnel/Fractal/Riemann.
+    float tunnelFeedbackMix;
+    uint tunnelFeedbackActive;
+    float fractalFeedbackMix;
+    uint fractalFeedbackActive;
+    float riemannFeedbackMix;
+    uint riemannFeedbackActive;
+
+    // Per-mode field symmetry.
+    uint fieldSymmetryFold;
+    uint fieldSymmetryPadding;
 };
 
 struct SpectralRingData {
@@ -123,6 +152,11 @@ struct RiemannAccentData {
     float4 decaySeedSectorActive;
 };
 
+struct SharedParticleData {
+    float4 positionSizeIntensity;
+    float4 velocityHueAge;
+};
+
 vertex VertexOut renderer_fullscreen_vertex(uint vertexID [[vertex_id]]) {
     float2 positions[3] = {
         float2(-1.0, -1.0),
@@ -140,6 +174,19 @@ float2 centeredPoint(float2 uv, float2 resolution, float2 centerOffset) {
     float2 safeResolution = max(resolution, float2(1.0, 1.0));
     float aspect = safeResolution.x / safeResolution.y;
     return float2((uv.x - 0.5) * aspect, uv.y - 0.5) - centerOffset;
+}
+
+// Per-mode field symmetry: fold centered point into radial symmetry sectors.
+// Unlike post-process applyKaleidoscope (which works on UV space after rendering),
+// this transforms the field coordinate *before* computation, so the field itself
+// is symmetric rather than the rendered image being reflected.
+float2 applyFieldSymmetry(float2 point, uint folds) {
+    if (folds == 0u) return point;
+    float angle = atan2(point.y, point.x);
+    float radius = length(point);
+    float segmentAngle = kPi / float(folds);
+    angle = abs(fmod(abs(angle), 2.0 * segmentAngle) - segmentAngle);
+    return float2(cos(angle), sin(angle)) * radius;
 }
 
 float wrappedAngleDelta(float a, float b) {
@@ -400,14 +447,53 @@ fragment float4 renderer_radial_fragment(
             return float4(canvasBaseColor(uniforms), 1.0);
         }
 
+        float2 csPoint = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+        csPoint = applyFieldSymmetry(csPoint, uniforms.fieldSymmetryFold);
+        float csRadius = length(csPoint);
+        float csAngle = atan2(csPoint.y, csPoint.x);
+
         float hue = fract(uniforms.colorShiftHue);
         float saturation = clamp(uniforms.colorShiftSaturation, 0.0, 1.0);
-        float value = 0.86;
-        float3 color = hsvToRgb(float3(hue, saturation, value));
+        float amplitude = clamp(uniforms.featureAmplitude, 0.0, 1.0);
+        float low = clamp(uniforms.lowBandEnergy, 0.0, 1.0);
+        float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
+        float high = clamp(uniforms.highBandEnergy, 0.0, 1.0);
+
+        // Base color with subtle radial vignette.
+        float value = mix(0.88, 0.78, csRadius * 0.6);
+        float3 baseColor = hsvToRgb(float3(hue, saturation, value));
+
+        // Concentric pulse rings driven by low-band energy.
+        float ringTime = uniforms.time * (0.3 + uniforms.motion * 0.8);
+        float ringPhase = csRadius * mix(4.0, 8.0, uniforms.scale) - ringTime;
+        float ring = exp(-pow(fract(ringPhase) * 6.0, 2.0));
+        float ringIntensity = ring * low * 0.14;
+
+        // Radial rays driven by mid-band energy.
+        float rayCount = 6.0;
+        float rayAngle = abs(sin(csAngle * rayCount + uniforms.time * 0.15));
+        float ray = pow(rayAngle, mix(12.0, 4.0, mid)) * exp(-csRadius * 2.8);
+        float rayIntensity = ray * mid * 0.10;
+
+        // High-frequency shimmer at the edges.
+        float shimmer = sin(csRadius * 28.0 + uniforms.time * 2.4 + csAngle * 3.0);
+        shimmer = max(0.0, shimmer) * exp(-csRadius * 1.2);
+        float shimmerIntensity = shimmer * high * 0.06;
+
+        // Center glow that pulses with amplitude.
+        float centerGlow = exp(-csRadius * mix(5.0, 2.5, amplitude) * (1.0 + uniforms.scale));
+        float glowIntensity = centerGlow * amplitude * 0.12;
+
+        // Compose: geometric layers modulate brightness and add slight hue variation.
+        float geometricEnergy = ringIntensity + rayIntensity + shimmerIntensity + glowIntensity;
+        float3 accentHue = hsvToRgb(float3(fract(hue + 0.08), saturation * 0.9, 1.0));
+        float3 color = baseColor + (accentHue * geometricEnergy);
+
         return float4(applyCanvasAppearance(color, uniforms), 1.0);
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+    point = applyFieldSymmetry(point, uniforms.fieldSymmetryFold);
 
     float time = uniforms.time;
     float intensity = uniforms.intensity;
@@ -838,9 +924,19 @@ fragment float4 renderer_prism_facet_field_fragment(
 
     float2 uv = in.uv;
     float2 point = centeredPoint(uv, uniforms.resolution, uniforms.centerOffset);
-    float density = mix(2.4, 13.5, clamp(uniforms.prismFacetDensity, 0.0, 1.0));
+    point = applyFieldSymmetry(point, uniforms.fieldSymmetryFold);
+    float low = clamp(uniforms.lowBandEnergy, 0.0, 1.0);
+    float density = mix(2.4, 13.5, clamp(uniforms.prismFacetDensity + low * 0.15, 0.0, 1.0));
     float flowTime = uniforms.time * (0.16 + (uniforms.motion * 1.7));
     uint sampleCount = clamp(uniforms.prismFacetSampleCount, 4u, 20u);
+
+    // Pitch-driven hue anchor: when a stable pitch is detected, bias the spectral palette.
+    float pitchHueAnchor = 0.0;
+    if (uniforms.pitchConfidence > 0.6 && uniforms.stablePitchClass >= 0) {
+        pitchHueAnchor = (float(uniforms.stablePitchClass) / 12.0)
+            + (uniforms.stablePitchCents / 50.0) * 0.08;
+        pitchHueAnchor *= uniforms.pitchConfidence;
+    }
 
     float3 color = float3(0.0);
     float energy = 0.0;
@@ -863,7 +959,7 @@ fragment float4 renderer_prism_facet_field_fragment(
         float weight = (1.0 - (t * 0.5)) / float(sampleCount);
         localEnergy *= weight;
 
-        float hue = fract((t * 0.42) + (uniforms.prismDispersion * 0.18) + dot(cell, float2(0.018, 0.027)));
+        float hue = fract((t * 0.42) + (uniforms.prismDispersion * 0.18) + dot(cell, float2(0.018, 0.027)) + pitchHueAnchor * 0.35);
         color += spectralPalette(hue) * localEnergy;
         energy += localEnergy;
     }
@@ -880,7 +976,8 @@ fragment float4 renderer_prism_dispersion_fragment(
 ) {
     float2 uv = in.uv;
     float facetEnergy = facetField.sample(linearSampler, uv).a;
-    float split = (0.0008 + (uniforms.prismDispersion * 0.0075)) * (0.55 + (uniforms.attackStrength * 0.45));
+    float high = clamp(uniforms.highBandEnergy, 0.0, 1.0);
+    float split = (0.0008 + (uniforms.prismDispersion * 0.0075)) * (0.55 + (uniforms.attackStrength * 0.45) + (high * 0.25));
     float2 texel = 1.0 / max(uniforms.resolution, float2(1.0, 1.0));
 
     float gx0 = facetField.sample(linearSampler, uv - float2(texel.x, 0.0)).a;
@@ -956,6 +1053,7 @@ fragment float4 renderer_prism_composite_fragment(
     texture2d<float> facetField [[texture(0)]],
     texture2d<float> dispersionField [[texture(1)]],
     texture2d<float> accentField [[texture(2)]],
+    texture2d<float> feedbackField [[texture(3)]],
     sampler linearSampler [[sampler(0)]]
 ) {
     if (uniforms.prismBlackout > 0u) {
@@ -976,6 +1074,17 @@ fragment float4 renderer_prism_composite_fragment(
     composed += ambient;
     composed = max(composed - (uniforms.blackFloor * 0.12), float3(0.0));
 
+    // Temporal feedback: blend previous frame for trail persistence.
+    float feedbackMix = clamp(uniforms.prismFeedbackMix, 0.0, 0.92);
+    if (feedbackMix > 0.001 && uniforms.prismFeedbackActive > 0u) {
+        // Sample history with slight UV drift for organic motion.
+        float2 fbUV = uv + float2(sin(uniforms.time * 0.13) * 0.002, cos(uniforms.time * 0.11) * 0.002);
+        float3 history = feedbackField.sample(linearSampler, fbUV).rgb;
+        // Decay history slightly to prevent infinite brightness buildup.
+        history *= (0.96 + feedbackMix * 0.03);
+        composed = mix(composed, max(composed, history), feedbackMix);
+    }
+
     float vignette = smoothstep(1.55, 0.14, radius);
     composed *= vignette;
     return float4(applyCanvasAppearance(composed, uniforms), 1.0);
@@ -990,10 +1099,12 @@ fragment float4 renderer_tunnel_field_fragment(
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+    point = applyFieldSymmetry(point, uniforms.fieldSymmetryFold);
     float squareRadius = max(abs(point.x), abs(point.y));
     float centerRadius = length(point);
     float invDepth = 1.0 / max(squareRadius + 0.10, 0.10);
-    float depthTime = uniforms.time * (0.45 + (uniforms.tunnelDepthSpeed * 2.40));
+    float low = clamp(uniforms.lowBandEnergy, 0.0, 1.0);
+    float depthTime = uniforms.time * (0.45 + (uniforms.tunnelDepthSpeed * 2.40) + (low * 0.80));
     float depthPhase = invDepth + depthTime;
 
     float ringDensity = mix(0.30, 0.72, clamp(uniforms.tunnelShapeScale, 0.0, 1.0));
@@ -1019,7 +1130,14 @@ fragment float4 renderer_tunnel_field_fragment(
     energy *= mix(0.62, 0.94, flow);
     energy = max(0.0, energy - (centerWell * 0.18));
 
-    float hue = fract((latticeUV.x * 0.07) + (latticeUV.y * 0.05) + (depthPhase * 0.03));
+    // Pitch-driven hue shift: stable pitch anchors the tunnel's color palette.
+    float tunnelPitchShift = 0.0;
+    if (uniforms.pitchConfidence > 0.6 && uniforms.stablePitchClass >= 0) {
+        tunnelPitchShift = (float(uniforms.stablePitchClass) / 12.0)
+            + (uniforms.stablePitchCents / 50.0) * 0.06;
+        tunnelPitchShift *= uniforms.pitchConfidence * 0.40;
+    }
+    float hue = fract((latticeUV.x * 0.07) + (latticeUV.y * 0.05) + (depthPhase * 0.03) + tunnelPitchShift);
     float3 prism = spectralPalette(hue);
     float3 baseA = float3(0.004, 0.008, 0.016);
     float3 baseB = float3(0.016, 0.028, 0.050);
@@ -1060,7 +1178,8 @@ fragment float4 renderer_tunnel_shapes_fragment(
 
         float perspective = 1.0 / (0.35 + depth);
         float2 projected = lane * perspective;
-        float size = scale * perspective * mix(0.95, 2.10, uniforms.tunnelShapeScale);
+        float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
+        float size = scale * perspective * mix(0.95, 2.10, uniforms.tunnelShapeScale) * (1.0 + mid * 0.25);
         float2 local = (point - projected) / max(size, 0.0001);
 
         float axisAngle = atan2(shape.axisDecaySustainRelease.y, shape.axisDecaySustainRelease.x);
@@ -1108,6 +1227,7 @@ fragment float4 renderer_tunnel_composite_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]],
     texture2d<float> tunnelField [[texture(0)]],
     texture2d<float> shapeField [[texture(1)]],
+    texture2d<float> feedbackField [[texture(2)]],
     sampler linearSampler [[sampler(0)]]
 ) {
     if (uniforms.tunnelBlackout > 0u) {
@@ -1153,6 +1273,16 @@ fragment float4 renderer_tunnel_composite_fragment(
 
     float vignette = smoothstep(1.62, 0.12, squareRadius);
     composed *= vignette;
+
+    // Temporal feedback: blend previous frame for trail persistence.
+    float feedbackMix = clamp(uniforms.tunnelFeedbackMix, 0.0, 0.92);
+    if (feedbackMix > 0.001 && uniforms.tunnelFeedbackActive > 0u && !is_null_texture(feedbackField)) {
+        float2 fbUV = uv + float2(sin(uniforms.time * 0.13) * 0.002, cos(uniforms.time * 0.11) * 0.002);
+        float3 history = feedbackField.sample(linearSampler, fbUV).rgb;
+        history *= (0.96 + feedbackMix * 0.03);
+        composed = mix(composed, max(composed, history), feedbackMix);
+    }
+
     if (!isfinite(composed.x) || !isfinite(composed.y) || !isfinite(composed.z)) {
         return float4(applyCanvasAppearance(clamp(field, float3(0.0), float3(3.0)), uniforms), 1.0);
     }
@@ -1168,6 +1298,7 @@ fragment float4 renderer_fractal_field_fragment(
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+    point = applyFieldSymmetry(point, uniforms.fieldSymmetryFold);
     float detail = clamp(uniforms.fractalDetail, 0.0, 1.0);
     float flowRate = clamp(uniforms.fractalFlowRate, 0.0, 1.0);
     float flow = fract(uniforms.fractalFlowPhase + (uniforms.time * (0.03 + (flowRate * 0.24))));
@@ -1179,7 +1310,8 @@ fragment float4 renderer_fractal_field_fragment(
     float cAngle = (flow * (2.0 * kPi)) + (pitchPhase * 0.45);
     float cMagnitude = mix(0.48, 0.82, detail) + (uniforms.featureAmplitude * 0.08);
     float2 c = float2(cos(cAngle), sin(cAngle)) * cMagnitude;
-    c += float2(sin(flow * 3.2), cos(flow * 2.6)) * (0.04 + uniforms.motion * 0.07);
+    float high = clamp(uniforms.highBandEnergy, 0.0, 1.0);
+    c += float2(sin(flow * 3.2), cos(flow * 2.6)) * (0.04 + uniforms.motion * 0.07 + high * 0.04);
 
     float zoom = mix(0.92, 2.45, detail);
     float2 z = point * zoom;
@@ -1204,7 +1336,8 @@ fragment float4 renderer_fractal_field_fragment(
         float2 z2 = float2((z.x * z.x) - (z.y * z.y), (2.0 * z.x * z.y)) + c;
         z = z2;
 
-        float ringTarget = 0.75 + (0.35 * sin(flow * 6.0 + float(index) * 0.09));
+        float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
+        float ringTarget = 0.75 + (0.35 * sin(flow * 6.0 + float(index) * 0.09)) + (mid * 0.18);
         float line = abs((z.x * 0.68) + (z.y * 0.32));
         float ring = abs(length(z) - ringTarget);
         float cross = min(abs(z.x), abs(z.y));
@@ -1296,6 +1429,7 @@ fragment float4 renderer_fractal_composite_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]],
     texture2d<float> fieldTexture [[texture(0)]],
     texture2d<float> accentTexture [[texture(1)]],
+    texture2d<float> feedbackField [[texture(2)]],
     sampler linearSampler [[sampler(0)]]
 ) {
     if (uniforms.fractalBlackout > 0u) {
@@ -1318,6 +1452,16 @@ fragment float4 renderer_fractal_composite_fragment(
     composed = max(composed - (uniforms.blackFloor * 0.13), float3(0.0));
     float vignette = smoothstep(1.58, 0.10, radius);
     composed *= vignette;
+
+    // Temporal feedback: blend previous frame for trail persistence.
+    float feedbackMix = clamp(uniforms.fractalFeedbackMix, 0.0, 0.92);
+    if (feedbackMix > 0.001 && uniforms.fractalFeedbackActive > 0u && !is_null_texture(feedbackField)) {
+        float2 fbUV = uv + float2(sin(uniforms.time * 0.15) * 0.002, cos(uniforms.time * 0.12) * 0.002);
+        float3 history = feedbackField.sample(linearSampler, fbUV).rgb;
+        history *= (0.96 + feedbackMix * 0.03);
+        composed = mix(composed, max(composed, history), feedbackMix);
+    }
+
     return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
@@ -1355,6 +1499,7 @@ fragment float4 renderer_riemann_field_fragment(
     }
 
     float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+    point = applyFieldSymmetry(point, uniforms.fieldSymmetryFold);
     float detail = clamp(uniforms.riemannDetail, 0.0, 1.0);
     float flowRate = clamp(uniforms.riemannFlowRate, 0.0, 1.0);
     float flow = fract(uniforms.riemannFlowPhase);
@@ -1432,9 +1577,10 @@ fragment float4 renderer_riemann_field_fragment(
     float distanceEstimate = escaped ? (0.5 * log(max(magnitude, 1.000001)) * magnitude / derivative) : 0.0;
     float boundaryEnergy = escaped ? clamp(exp(-distanceEstimate * (22.0 + detail * 30.0)), 0.0, 1.0) : 0.0;
 
+    float mid = clamp(uniforms.midBandEnergy, 0.0, 1.0);
     float argumentLines = riemannContourLine(
         phaseNormalized + (flow * 0.04),
-        8.0 + (float(uniforms.riemannTrapSampleCount) * 0.55) + (detail * 6.0),
+        8.0 + (float(uniforms.riemannTrapSampleCount) * 0.55) + (detail * 6.0) + (mid * 4.0),
         0.10
     );
     float equipotentialLines = riemannContourLine(
@@ -1561,6 +1707,7 @@ fragment float4 renderer_riemann_composite_fragment(
     constant RendererFrameUniforms& uniforms [[buffer(0)]],
     texture2d<float> fieldTexture [[texture(0)]],
     texture2d<float> accentTexture [[texture(1)]],
+    texture2d<float> feedbackField [[texture(2)]],
     sampler linearSampler [[sampler(0)]]
 ) {
     if (uniforms.riemannBlackout > 0u) {
@@ -1578,6 +1725,16 @@ fragment float4 renderer_riemann_composite_fragment(
     composed = max(composed - (uniforms.blackFloor * 0.055), float3(0.0));
     float vignette = smoothstep(1.95, 0.00, radius);
     composed *= mix(1.0, vignette, 0.12);
+
+    // Temporal feedback: blend previous frame for trail persistence.
+    float feedbackMix = clamp(uniforms.riemannFeedbackMix, 0.0, 0.92);
+    if (feedbackMix > 0.001 && uniforms.riemannFeedbackActive > 0u && !is_null_texture(feedbackField)) {
+        float2 fbUV = uv + float2(sin(uniforms.time * 0.11) * 0.001, cos(uniforms.time * 0.09) * 0.001);
+        float3 history = feedbackField.sample(linearSampler, fbUV).rgb;
+        history *= (0.96 + feedbackMix * 0.03);
+        composed = mix(composed, max(composed, history), feedbackMix);
+    }
+
     return float4(applyCanvasAppearance(composed, uniforms), 1.0);
 }
 
@@ -2136,4 +2293,195 @@ fragment float4 patch_output_fragment(
     sampler linearSampler [[sampler(0)]]
 ) {
     return outputTex.sample(linearSampler, in.uv);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Post-processing pass: bloom, color grading, kaleidoscope
+// ─────────────────────────────────────────────────────────────────────────────
+
+static float2 applyKaleidoscope(float2 uv, uint folds) {
+    if (folds == 0) return uv;
+    float2 centered = uv - 0.5;
+    float angle = atan2(centered.y, centered.x);
+    float radius = length(centered);
+    float segmentAngle = kPi / float(folds);
+    angle = abs(fmod(abs(angle), 2.0 * segmentAngle) - segmentAngle);
+    return float2(cos(angle), sin(angle)) * radius + 0.5;
+}
+
+fragment float4 renderer_postprocess_fragment(
+    VertexOut in [[stage_in]],
+    constant RendererFrameUniforms &uniforms [[buffer(0)]],
+    texture2d<float> sceneTexture [[texture(0)]],
+    texture2d<float> transitionTexture [[texture(1)]],
+    sampler linearSampler [[sampler(0)]]
+) {
+    float2 uv = in.uv;
+
+    // Kaleidoscope fold.
+    uv = applyKaleidoscope(uv, uniforms.ppKaleidoscopeFold);
+
+    float4 baseColor = sceneTexture.sample(linearSampler, uv);
+
+    // Bloom: extract bright pixels and apply blurred glow.
+    float bloomIntensity = uniforms.ppBloomIntensity;
+    if (bloomIntensity > 0.001) {
+        float threshold = uniforms.ppBloomThreshold;
+        float radius = uniforms.ppBloomRadius;
+        float2 texelSize = 1.0 / uniforms.resolution;
+        float spread = radius * 12.0;
+
+        // 13-tap cross kernel for bloom approximation.
+        float3 bloom = float3(0.0);
+        float totalWeight = 0.0;
+        for (int i = -6; i <= 6; i++) {
+            float fi = float(i);
+            float weight = exp(-0.5 * (fi * fi) / max(spread * spread * 0.08, 0.01));
+            float2 offsetH = float2(fi * texelSize.x * spread, 0.0);
+            float2 offsetV = float2(0.0, fi * texelSize.y * spread);
+            float4 sampleH = sceneTexture.sample(linearSampler, uv + offsetH);
+            float4 sampleV = sceneTexture.sample(linearSampler, uv + offsetV);
+            float lumH = dot(sampleH.rgb, float3(0.2126, 0.7152, 0.0722));
+            float lumV = dot(sampleV.rgb, float3(0.2126, 0.7152, 0.0722));
+            float3 brightH = sampleH.rgb * smoothstep(threshold - 0.05, threshold + 0.15, lumH);
+            float3 brightV = sampleV.rgb * smoothstep(threshold - 0.05, threshold + 0.15, lumV);
+            bloom += (brightH + brightV) * weight;
+            totalWeight += weight * 2.0;
+        }
+        bloom /= max(totalWeight, 1.0);
+        baseColor.rgb += bloom * bloomIntensity * 2.0;
+    }
+
+    // Saturation: 0.5 = neutral, 0 = desaturated, 1 = oversaturated.
+    float saturationAdj = (uniforms.ppSaturation - 0.5) * 2.0;
+    float lum = dot(baseColor.rgb, float3(0.2126, 0.7152, 0.0722));
+    baseColor.rgb = mix(float3(lum), baseColor.rgb, 1.0 + saturationAdj);
+
+    // Contrast: 0.5 = neutral, 0 = flat, 1 = high contrast.
+    float contrastAdj = (uniforms.ppContrast - 0.5) * 2.0;
+    baseColor.rgb = (baseColor.rgb - 0.5) * (1.0 + contrastAdj) + 0.5;
+
+    // Temperature shift: 0.5 = neutral, 0 = cool, 1 = warm.
+    float tempAdj = (uniforms.ppTemperatureShift - 0.5) * 2.0;
+    baseColor.r += tempAdj * 0.08;
+    baseColor.b -= tempAdj * 0.08;
+
+    baseColor.rgb = clamp(baseColor.rgb, 0.0, 1.0);
+
+    // Mode transition: snapshot crossfade.
+    float alpha = clamp(uniforms.modeTransitionAlpha, 0.0, 1.0);
+    if (alpha < 0.999 && !is_null_texture(transitionTexture)) {
+        float4 snapshotColor = transitionTexture.sample(linearSampler, in.uv);
+        baseColor.rgb = mix(snapshotColor.rgb, baseColor.rgb, alpha);
+    }
+
+    return baseColor;
+}
+
+// MARK: - Shared Particle System
+
+fragment float4 renderer_shared_particle_field_fragment(
+    VertexOut in [[stage_in]],
+    constant RendererFrameUniforms& uniforms [[buffer(0)]],
+    const device SharedParticleData* particles [[buffer(1)]]
+) {
+    float2 point = centeredPoint(in.uv, uniforms.resolution, uniforms.centerOffset);
+    float3 color = float3(0.0);
+    float totalEnergy = 0.0;
+
+    uint count = min(uniforms.sharedParticleCount, kMaxSharedParticles);
+    uint mode = uniforms.modeIndex;
+
+    for (uint i = 0; i < count; i++) {
+        SharedParticleData p = particles[i];
+        float2 pos = p.positionSizeIntensity.xy;
+        float size = max(p.positionSizeIntensity.z, 0.002);
+        float intensity = p.positionSizeIntensity.w;
+        if (intensity <= 0.0001) continue;
+
+        float2 vel = p.velocityHueAge.xy;
+        float hue = p.velocityHueAge.z;
+        float age = p.velocityHueAge.w;
+
+        float2 delta = point - pos;
+        float dist2 = dot(delta, delta);
+
+        // Early rejection.
+        float maxRadius = size * 14.0;
+        if (dist2 > maxRadius * maxRadius) continue;
+
+        float velLen = max(length(vel), 0.0001);
+        float2 dir = vel / velLen;
+        float2 tangent = float2(-dir.y, dir.x);
+
+        float along = dot(delta, dir);
+        float across = dot(delta, tangent);
+
+        // Per-mode rendering style.
+        float sigmaAlong, sigmaAcross, coreSharpness;
+        float3 particleColor;
+        float localIntensity = intensity;
+
+        if (mode == 2) {
+            // Tunnel: warm depth-trailing embers, elongated streaks.
+            sigmaAlong = size * 9.0;
+            sigmaAcross = size * 0.7;
+            coreSharpness = 3.0;
+            float warmHue = fract(hue * 0.15 + 0.02);
+            particleColor = spectralPalette(warmHue) * float3(1.3, 0.85, 0.6);
+            localIntensity *= (1.0 - age * 0.4);
+        } else if (mode == 1) {
+            // Prism: refractive sparkles with prismatic color spread.
+            sigmaAlong = size * 3.5;
+            sigmaAcross = size * 2.8;
+            coreSharpness = 4.5;
+            float prismaticSpread = along / max(sigmaAlong, 0.001) * 0.14;
+            particleColor = spectralPalette(fract(hue + prismaticSpread));
+            localIntensity *= 1.3;
+        } else if (mode == 3) {
+            // Fractal: orbit-trap fireflies, pulsing.
+            sigmaAlong = size * 2.2;
+            sigmaAcross = size * 2.2;
+            coreSharpness = 5.0;
+            particleColor = spectralPalette(hue);
+            float pulse = 0.55 + 0.45 * sin(age * 14.0 + hue * 6.28318);
+            localIntensity *= pulse;
+        } else if (mode == 4) {
+            // Riemann: subtle contour-following motes.
+            sigmaAlong = size * 4.5;
+            sigmaAcross = size * 1.6;
+            coreSharpness = 2.2;
+            particleColor = spectralPalette(hue) * 0.75;
+            localIntensity *= 0.65;
+        } else {
+            // Color Shift: soft aurora sparkles.
+            sigmaAlong = size * 4.5;
+            sigmaAcross = size * 2.0;
+            coreSharpness = 2.8;
+            particleColor = spectralPalette(hue);
+        }
+
+        // Anisotropic gaussian streak.
+        float streak = exp(-(
+            (along * along) / max(sigmaAlong * sigmaAlong, 1e-5) +
+            (across * across) / max(sigmaAcross * sigmaAcross, 1e-5)
+        ) * 1.5);
+
+        // Sharp core.
+        float core = exp(-(dist2 / max(size * size, 1e-5)) * coreSharpness);
+
+        float energy = (core * 0.72 + streak * 0.52) * localIntensity;
+        color += particleColor * energy;
+        totalEnergy += energy;
+    }
+
+    return float4(color, totalEnergy);
+}
+
+fragment float4 renderer_shared_particle_composite_fragment(
+    VertexOut in [[stage_in]],
+    texture2d<float> particleField [[texture(0)]],
+    sampler linearSampler [[sampler(0)]]
+) {
+    return particleField.sample(linearSampler, in.uv);
 }

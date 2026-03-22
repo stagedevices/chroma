@@ -26,7 +26,8 @@ public struct ChromaAppBootstrap {
             rendererService: MetalRendererService(),
             audioInputService: audioInputService,
             audioAnalysisService: audioAnalysisService,
-            cameraFeedbackService: cameraFeedbackService
+            cameraFeedbackService: cameraFeedbackService,
+            storeKitEnabled: true
         )
     }
 
@@ -39,7 +40,8 @@ public struct ChromaAppBootstrap {
             rendererService: HeadlessRendererService(),
             audioInputService: audioInputService,
             audioAnalysisService: audioAnalysisService,
-            cameraFeedbackService: cameraFeedbackService
+            cameraFeedbackService: cameraFeedbackService,
+            storeKitEnabled: false
         )
     }
 
@@ -48,9 +50,11 @@ public struct ChromaAppBootstrap {
         rendererService: RendererService,
         audioInputService: AudioInputService,
         audioAnalysisService: AudioAnalysisService,
-        cameraFeedbackService: CameraFeedbackService
+        cameraFeedbackService: CameraFeedbackService,
+        storeKitEnabled: Bool
     ) -> ChromaAppBootstrap {
         let router = AppRouter()
+        let billingStore = BillingStore(storeKitEnabled: storeKitEnabled)
         let parameterStore = ParameterStore(descriptors: ParameterCatalog.descriptors)
         let inputCalibrationService: InputCalibrationService = {
 #if DEBUG
@@ -110,7 +114,14 @@ public struct ChromaAppBootstrap {
             return LiveExternalDisplayCoordinator()
 #endif
         }()
-        let setlistService = PlaceholderSetlistService()
+        let setlistService: SetlistService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderSetlistService()
+            }
+#endif
+            return DiskSetlistService()
+        }()
         let presets = presetService.loadPresets()
         let performanceSets = setlistService.loadSets()
         let recoveredSnapshot = sessionRecoveryService.loadSnapshot()
@@ -140,7 +151,7 @@ public struct ChromaAppBootstrap {
             presets: presets,
             performanceSets: performanceSets
         )
-        let appViewModel = AppViewModel(router: router)
+        let appViewModel = AppViewModel(router: router, billingStore: billingStore)
         return ChromaAppBootstrap(appViewModel: appViewModel, sessionViewModel: sessionViewModel)
     }
 

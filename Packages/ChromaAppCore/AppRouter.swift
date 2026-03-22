@@ -18,6 +18,7 @@ public enum AppSheetDestination: String, Identifiable {
 public enum AppSheetDetentStyle: Equatable, Sendable {
     case mediumOnly
     case mediumAndLarge
+    case largeOnly
 }
 
 public enum AppSheetPresentationStyle: Equatable, Sendable {
@@ -36,9 +37,11 @@ public func appSheetPresentationStyle(for destination: AppSheetDestination) -> A
 
 public func appSheetDetentStyle(for destination: AppSheetDestination) -> AppSheetDetentStyle {
     switch destination {
-    case .settingsDiagnostics, .customBuilder:
+    case .customBuilder:
+        return .largeOnly
+    case .settingsDiagnostics, .presetBrowser:
         return .mediumAndLarge
-    case .modePicker, .presetBrowser, .feedbackSetup, .recorderExport, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
+    case .modePicker, .feedbackSetup, .recorderExport, .tunnelVariantPicker, .fractalPalettePicker, .riemannPalettePicker:
         return .mediumOnly
     }
 }

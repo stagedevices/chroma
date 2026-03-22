@@ -22,6 +22,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var lensSheen: Double
     public var prismFacetDensity: Double
     public var prismDispersion: Double
+    public var prismFeedbackMix: Double
     public var tunnelShapeScale: Double
     public var tunnelDepthSpeed: Double
     public var tunnelReleaseTail: Double
@@ -36,6 +37,10 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var riemannNavigationMode: Double
     public var riemannSteeringStrength: Double
     public var riemannPaletteVariant: Double
+    public var tunnelFeedbackMix: Double
+    public var fractalFeedbackMix: Double
+    public var riemannFeedbackMix: Double
+    public var fieldSymmetryFold: Double
     public var performanceModeIndex: Double
     public var silenceGateThreshold: Double
     public var featureAmplitude: Double
@@ -58,6 +63,13 @@ public struct RendererControlState: Codable, Equatable, Sendable {
     public var colorFeedbackEnabled: Bool
     public var colorFeedbackBlackout: Bool
     public var isLightAppearance: Bool
+    public var ppBloomIntensity: Double
+    public var ppBloomThreshold: Double
+    public var ppBloomRadius: Double
+    public var ppSaturation: Double
+    public var ppContrast: Double
+    public var ppTemperatureShift: Double
+    public var ppKaleidoscopeFold: Double
     public var centerOffset: RendererCenterOffset
 
     public init(
@@ -72,6 +84,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         lensSheen: Double = 0.54,
         prismFacetDensity: Double = 0.58,
         prismDispersion: Double = 0.62,
+        prismFeedbackMix: Double = 0.0,
         tunnelShapeScale: Double = 0.56,
         tunnelDepthSpeed: Double = 0.62,
         tunnelReleaseTail: Double = 0.58,
@@ -86,6 +99,10 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         riemannNavigationMode: Double = 0.0,
         riemannSteeringStrength: Double = 0.62,
         riemannPaletteVariant: Double = 0,
+        tunnelFeedbackMix: Double = 0.0,
+        fractalFeedbackMix: Double = 0.0,
+        riemannFeedbackMix: Double = 0.0,
+        fieldSymmetryFold: Double = 0.0,
         performanceModeIndex: Double = 0.0,
         silenceGateThreshold: Double = 0.03,
         featureAmplitude: Double = 0,
@@ -108,6 +125,13 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         colorFeedbackEnabled: Bool = false,
         colorFeedbackBlackout: Bool = false,
         isLightAppearance: Bool = false,
+        ppBloomIntensity: Double = 0.0,
+        ppBloomThreshold: Double = 0.72,
+        ppBloomRadius: Double = 0.42,
+        ppSaturation: Double = 0.5,
+        ppContrast: Double = 0.5,
+        ppTemperatureShift: Double = 0.5,
+        ppKaleidoscopeFold: Double = 0.0,
         centerOffset: RendererCenterOffset = RendererCenterOffset()
     ) {
         self.intensity = intensity
@@ -121,6 +145,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.lensSheen = lensSheen
         self.prismFacetDensity = prismFacetDensity
         self.prismDispersion = prismDispersion
+        self.prismFeedbackMix = prismFeedbackMix
         self.tunnelShapeScale = tunnelShapeScale
         self.tunnelDepthSpeed = tunnelDepthSpeed
         self.tunnelReleaseTail = tunnelReleaseTail
@@ -135,6 +160,10 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.riemannNavigationMode = riemannNavigationMode
         self.riemannSteeringStrength = riemannSteeringStrength
         self.riemannPaletteVariant = riemannPaletteVariant
+        self.tunnelFeedbackMix = tunnelFeedbackMix
+        self.fractalFeedbackMix = fractalFeedbackMix
+        self.riemannFeedbackMix = riemannFeedbackMix
+        self.fieldSymmetryFold = fieldSymmetryFold
         self.performanceModeIndex = performanceModeIndex
         self.silenceGateThreshold = silenceGateThreshold
         self.featureAmplitude = featureAmplitude
@@ -157,6 +186,13 @@ public struct RendererControlState: Codable, Equatable, Sendable {
         self.colorFeedbackEnabled = colorFeedbackEnabled
         self.colorFeedbackBlackout = colorFeedbackBlackout
         self.isLightAppearance = isLightAppearance
+        self.ppBloomIntensity = ppBloomIntensity
+        self.ppBloomThreshold = ppBloomThreshold
+        self.ppBloomRadius = ppBloomRadius
+        self.ppSaturation = ppSaturation
+        self.ppContrast = ppContrast
+        self.ppTemperatureShift = ppTemperatureShift
+        self.ppKaleidoscopeFold = ppKaleidoscopeFold
         self.centerOffset = centerOffset
     }
 
@@ -173,6 +209,7 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             lensSheen: lensSheen.clamped(to: 0 ... 1),
             prismFacetDensity: prismFacetDensity.clamped(to: 0 ... 1),
             prismDispersion: prismDispersion.clamped(to: 0 ... 1),
+            prismFeedbackMix: prismFeedbackMix.clamped(to: 0 ... 1),
             tunnelShapeScale: tunnelShapeScale.clamped(to: 0 ... 1),
             tunnelDepthSpeed: tunnelDepthSpeed.clamped(to: 0 ... 1),
             tunnelReleaseTail: tunnelReleaseTail.clamped(to: 0 ... 1),
@@ -187,6 +224,10 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             riemannNavigationMode: riemannNavigationMode.clamped(to: 0 ... 1),
             riemannSteeringStrength: riemannSteeringStrength.clamped(to: 0 ... 1),
             riemannPaletteVariant: riemannPaletteVariant.clamped(to: 0 ... 7),
+            tunnelFeedbackMix: tunnelFeedbackMix.clamped(to: 0 ... 1),
+            fractalFeedbackMix: fractalFeedbackMix.clamped(to: 0 ... 1),
+            riemannFeedbackMix: riemannFeedbackMix.clamped(to: 0 ... 1),
+            fieldSymmetryFold: fieldSymmetryFold.clamped(to: 0 ... 8),
             performanceModeIndex: performanceModeIndex.clamped(to: 0 ... 2),
             silenceGateThreshold: silenceGateThreshold.clamped(to: 0.005 ... 0.20),
             featureAmplitude: featureAmplitude.clamped(to: 0 ... 1),
@@ -209,6 +250,13 @@ public struct RendererControlState: Codable, Equatable, Sendable {
             colorFeedbackEnabled: colorFeedbackEnabled,
             colorFeedbackBlackout: colorFeedbackBlackout,
             isLightAppearance: isLightAppearance,
+            ppBloomIntensity: ppBloomIntensity.clamped(to: 0 ... 1),
+            ppBloomThreshold: ppBloomThreshold.clamped(to: 0 ... 1),
+            ppBloomRadius: ppBloomRadius.clamped(to: 0 ... 1),
+            ppSaturation: ppSaturation.clamped(to: 0 ... 1),
+            ppContrast: ppContrast.clamped(to: 0 ... 1),
+            ppTemperatureShift: ppTemperatureShift.clamped(to: 0 ... 1),
+            ppKaleidoscopeFold: ppKaleidoscopeFold.clamped(to: 0 ... 4),
             centerOffset: RendererCenterOffset(
                 x: centerOffset.x.clamped(to: -1 ... 1),
                 y: centerOffset.y.clamped(to: -1 ... 1)

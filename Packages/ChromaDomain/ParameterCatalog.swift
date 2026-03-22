@@ -35,7 +35,7 @@ public enum ParameterCatalog {
         VisualModeDescriptor(
             id: .custom,
             name: VisualModeID.custom.displayName,
-            summary: "Node-based custom graph builder scaffold for future executable chains.",
+            summary: "Node-based custom graph builder for executable visual chains.",
             supportsMorphing: false
         ),
     ]
@@ -114,6 +114,18 @@ public enum ParameterCatalog {
             maximumValue: 2.0
         ),
         ParameterDescriptor(
+            id: "mode.colorShift.symmetryFold",
+            title: "Symmetry",
+            summary: "Bilateral/radial symmetry fold count baked into the Color Shift field.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.colorShift),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 8.0
+        ),
+        ParameterDescriptor(
             id: "mode.prismField.facetDensity",
             title: "Facet Density",
             summary: "Prism facet complexity and caustic cell frequency.",
@@ -136,6 +148,30 @@ public enum ParameterCatalog {
             defaultValue: .scalar(0.62),
             minimumValue: 0.0,
             maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.prismField.feedbackMix",
+            title: "Feedback",
+            summary: "Temporal trail persistence; higher values create lingering echoes.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.prismField),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.prismField.symmetryFold",
+            title: "Symmetry",
+            summary: "Bilateral/radial symmetry fold count baked into the Prism field.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.prismField),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 8.0
         ),
         ParameterDescriptor(
             id: "mode.tunnelCels.shapeScale",
@@ -186,6 +222,30 @@ public enum ParameterCatalog {
             maximumValue: 2.0
         ),
         ParameterDescriptor(
+            id: "mode.tunnelCels.feedbackMix",
+            title: "Feedback",
+            summary: "Temporal trail persistence; higher values create lingering echoes.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.tunnelCels.symmetryFold",
+            title: "Symmetry",
+            summary: "Bilateral/radial symmetry fold count baked into the tunnel field.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.tunnelCels),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 8.0
+        ),
+        ParameterDescriptor(
             id: "mode.fractalCaustics.detail",
             title: "Detail",
             summary: "Julia orbit-trap detail and field complexity.",
@@ -232,6 +292,30 @@ public enum ParameterCatalog {
             defaultValue: .scalar(0.0),
             minimumValue: 0.0,
             maximumValue: 7.0
+        ),
+        ParameterDescriptor(
+            id: "mode.fractalCaustics.feedbackMix",
+            title: "Feedback",
+            summary: "Temporal trail persistence; higher values create lingering echoes.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.fractalCaustics.symmetryFold",
+            title: "Symmetry",
+            summary: "Bilateral/radial symmetry fold count baked into the fractal field.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.fractalCaustics),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 8.0
         ),
         ParameterDescriptor(
             id: "mode.riemannCorridor.detail",
@@ -306,6 +390,30 @@ public enum ParameterCatalog {
             maximumValue: 7.0
         ),
         ParameterDescriptor(
+            id: "mode.riemannCorridor.feedbackMix",
+            title: "Feedback",
+            summary: "Temporal trail persistence; higher values create lingering echoes.",
+            group: .response,
+            tier: .advanced,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "mode.riemannCorridor.symmetryFold",
+            title: "Symmetry",
+            summary: "Bilateral/radial symmetry fold count baked into the Riemann field.",
+            group: .geometry,
+            tier: .advanced,
+            scope: .mode(.riemannCorridor),
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 8.0
+        ),
+        ParameterDescriptor(
             id: "output.blackFloor",
             title: "Black Floor",
             summary: "Output floor to preserve darkness between events.",
@@ -326,6 +434,90 @@ public enum ParameterCatalog {
             scope: .global,
             controlStyle: .toggle,
             defaultValue: .toggle(false)
+        ),
+        ParameterDescriptor(
+            id: "postProcess.bloomIntensity",
+            title: "Bloom Intensity",
+            summary: "Strength of the bloom glow. Zero disables bloom.",
+            group: .output,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.bloomThreshold",
+            title: "Bloom Threshold",
+            summary: "Luminance threshold above which bloom activates.",
+            group: .output,
+            tier: .advanced,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.72),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.bloomRadius",
+            title: "Bloom Radius",
+            summary: "Spatial spread of the bloom kernel.",
+            group: .output,
+            tier: .advanced,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.42),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.saturation",
+            title: "Saturation",
+            summary: "Global color saturation adjustment.",
+            group: .output,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.5),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.contrast",
+            title: "Contrast",
+            summary: "Global contrast curve strength.",
+            group: .output,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.5),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.temperatureShift",
+            title: "Temperature",
+            summary: "Warm/cool color temperature bias.",
+            group: .output,
+            tier: .advanced,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.5),
+            minimumValue: 0.0,
+            maximumValue: 1.0
+        ),
+        ParameterDescriptor(
+            id: "postProcess.kaleidoscopeFold",
+            title: "Kaleidoscope",
+            summary: "Mirror symmetry fold count (0=off, 1=2-fold, 2=4-fold, 3=6-fold, 4=8-fold).",
+            group: .output,
+            tier: .basic,
+            scope: .global,
+            controlStyle: .slider,
+            defaultValue: .scalar(0.0),
+            minimumValue: 0.0,
+            maximumValue: 4.0
         ),
     ]
 
@@ -358,6 +550,7 @@ public enum ParameterCatalog {
                 "response.smoothing",
                 "mode.prismField.facetDensity",
                 "mode.prismField.dispersion",
+                "mode.prismField.feedbackMix",
                 "output.blackFloor",
             ]
         case .tunnelCels:
@@ -407,6 +600,7 @@ public enum ParameterCatalog {
                 "response.smoothing",
                 "mode.prismField.facetDensity",
                 "mode.prismField.dispersion",
+                "mode.prismField.feedbackMix",
                 "output.blackFloor",
             ]
         case .tunnelCels:

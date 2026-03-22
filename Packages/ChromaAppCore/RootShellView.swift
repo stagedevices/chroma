@@ -79,6 +79,8 @@ public struct RootShellView: View {
             triggerInkTransition()
         }
         .task {
+            await appViewModel.billingStore.startIfNeeded()
+            sessionViewModel.reconcileRecoveredProAccess(hasProAccess: appViewModel.billingStore.isProActive)
             await sessionViewModel.startRealtimeAudioPipeline()
         }
         .onAppear {
@@ -93,9 +95,40 @@ public struct RootShellView: View {
         .onChange(of: sessionViewModel.isLightGlassAppearance) { _, _ in
             syncExternalProgramWindow()
         }
+        .onChange(of: appViewModel.billingStore.isProActive) { _, isProActive in
+            sessionViewModel.reconcileRecoveredProAccess(hasProAccess: isProActive)
+        }
         .onDisappear {
             sessionViewModel.stopRealtimeAudioPipeline()
             releaseExternalProgramWindow()
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { appViewModel.isShowingPaywall },
+                set: { isPresented in
+                    appViewModel.isShowingPaywall = isPresented
+                    if !isPresented {
+                        appViewModel.dismissPaywall()
+                    }
+                }
+            ),
+            onDismiss: {
+                appViewModel.dismissPaywall()
+            }
+        ) {
+            ChromaProPaywallView(
+                billingStore: appViewModel.billingStore,
+                entryPoint: appViewModel.paywallEntryPoint ?? .mode(.tunnelCels),
+                onDismiss: { appViewModel.dismissPaywall() },
+                onSelectMode: { modeID in sessionViewModel.selectMode(modeID) },
+                onPresentModePicker: { appViewModel.presentModePicker() },
+                onPresentBuilder: { appViewModel.presentCustomPatchBuilder() },
+                onPresentRecorder: { appViewModel.presentRecorderExport() },
+                onPresentSettings: { appViewModel.presentSettingsDiagnostics() },
+                onPresentPresets: { appViewModel.presentPresetBrowser() }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -154,6 +187,7 @@ public struct RootShellView: View {
         let destination: AppSheetDestination?
         let action: () -> Void
         var isFullscreenAction: Bool = false
+        var proBadgeStyle: ChromaProBadge.Style? = nil
     }
 
     private var topChrome: some View {
@@ -331,7 +365,7 @@ public struct RootShellView: View {
                 isLightAppearance: isLightGlassAppearance,
                 savePreset: {
                     appViewModel.registerPerformanceInteraction()
-                    return sessionViewModel.quickSaveActiveModePreset()
+                    return quickSavePresetIfAllowed()
                 },
                 noteInteraction: appViewModel.registerPerformanceInteraction
             )
@@ -396,7 +430,8 @@ public struct RootShellView: View {
                     title: "Builder",
                     systemImage: "point.3.connected.trianglepath.dotted",
                     destination: .customBuilder,
-                    action: appViewModel.presentCustomPatchBuilder
+                    action: presentCustomBuilderIfAllowed,
+                    proBadgeStyle: appViewModel.billingStore.isProActive ? nil : .locked
                 )
             )
         }
@@ -442,7 +477,8 @@ public struct RootShellView: View {
             systemImage: tile.systemImage,
             isLightAppearance: isLightGlassAppearance,
             isFullscreenAction: tile.isFullscreenAction,
-            action: { handleActionTileTap(tile) }
+            action: { handleActionTileTap(tile) },
+            badge: tile.proBadgeStyle
         )
 
 #if targetEnvironment(macCatalyst)
@@ -478,6 +514,21 @@ public struct RootShellView: View {
         )
     }
 
+    private func quickSavePresetIfAllowed() -> Preset? {
+        if sessionViewModel.freePresetSaveLimitReached,
+           appViewModel.requirePro(for: .unlimitedPresets, entryPoint: .presets) {
+            return nil
+        }
+        return sessionViewModel.quickSaveActiveModePreset()
+    }
+
+    private func presentCustomBuilderIfAllowed() {
+        if appViewModel.requirePro(for: .customBuilder, entryPoint: .customBuilder) {
+            return
+        }
+        appViewModel.presentCustomPatchBuilder()
+    }
+    
     private func handleActionTileTap(_ tile: ActionTileModel) {
 #if targetEnvironment(macCatalyst)
         if let destination = tile.destination,
@@ -505,6 +556,13 @@ public struct RootShellView: View {
     private func presentedSheet(for destination: AppSheetDestination) -> some View {
         let content = AnyView(sheetContent(for: destination))
             .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+#if targetEnvironment(macCatalyst)
+        content
+            .frame(
+                minWidth: catalystSheetMinWidth(for: destination),
+                minHeight: catalystSheetMinHeight(for: destination)
+            )
+#else
         switch appSheetDetentStyle(for: destination) {
         case .mediumOnly:
             content
@@ -514,6 +572,45 @@ public struct RootShellView: View {
             content
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        case .largeOnly:
+            content
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+#endif
+    }
+
+    private func catalystSheetMinWidth(for destination: AppSheetDestination) -> CGFloat {
+        switch destination {
+        case .customBuilder:
+            return 700
+        case .modePicker:
+            return 520
+        case .presetBrowser:
+            return 520
+        case .recorderExport:
+            return 480
+        case .settingsDiagnostics:
+            return 480
+        default:
+            return 420
+        }
+    }
+
+    private func catalystSheetMinHeight(for destination: AppSheetDestination) -> CGFloat {
+        switch destination {
+        case .customBuilder:
+            return 600
+        case .modePicker:
+            return 560
+        case .presetBrowser:
+            return 500
+        case .recorderExport:
+            return 480
+        case .settingsDiagnostics:
+            return 500
+        default:
+            return 400
         }
     }
 
@@ -521,15 +618,15 @@ public struct RootShellView: View {
     private func sheetContent(for destination: AppSheetDestination) -> some View {
         switch destination {
         case .modePicker:
-            ModePickerSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
+                    ModePickerSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { router.dismiss() }
         case .feedbackSetup:
             FeedbackSetupSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
         case .presetBrowser:
-            PresetBrowserSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
+                    PresetBrowserSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { router.dismiss() }
         case .recorderExport:
-            RecorderExportSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
+            RecorderExportSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { router.dismiss() }
         case .settingsDiagnostics:
-            SettingsDiagnosticsSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
+            SettingsDiagnosticsSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { router.dismiss() }
         case .tunnelVariantPicker:
             TunnelVariantPickerSheet(sessionViewModel: sessionViewModel) { router.dismiss() }
         case .fractalPalettePicker:
@@ -545,19 +642,19 @@ public struct RootShellView: View {
     private func popoverContent(for destination: AppSheetDestination) -> some View {
         switch destination {
         case .modePicker:
-            ModePickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
-                .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
+                    ModePickerSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { dismissActivePopover() }
+                        .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .feedbackSetup:
             FeedbackSetupSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .presetBrowser:
-            PresetBrowserSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+            PresetBrowserSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { dismissActivePopover() }
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .recorderExport:
-            RecorderExportSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+            RecorderExportSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { dismissActivePopover() }
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .settingsDiagnostics:
-            SettingsDiagnosticsSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
+            SettingsDiagnosticsSheet(appViewModel: appViewModel, sessionViewModel: sessionViewModel) { dismissActivePopover() }
                 .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
         case .tunnelVariantPicker:
             TunnelVariantPickerSheet(sessionViewModel: sessionViewModel) { dismissActivePopover() }
@@ -1165,6 +1262,7 @@ private struct ActionTileButton: View {
     let isLightAppearance: Bool
     let isFullscreenAction: Bool
     let action: () -> Void
+    let badge: ChromaProBadge.Style?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var symbolEffectToken = UUID()
@@ -1230,6 +1328,12 @@ private struct ActionTileButton: View {
         .overlay {
             shape
                 .stroke(strokeColor, lineWidth: 1)
+        }
+        .overlay(alignment: .topTrailing) {
+            if let badge {
+                ChromaProBadge(style: badge)
+                    .padding(10)
+            }
         }
         .onAppear {
             guard !reduceMotion else { return }
