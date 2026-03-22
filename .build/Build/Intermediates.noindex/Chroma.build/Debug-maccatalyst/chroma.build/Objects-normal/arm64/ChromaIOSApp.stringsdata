@@ -1,0 +1,64 @@
+{
+  "source": "/Users/seb/chroma/Apps/Chroma-iOS/ChromaIOSApp.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Chroma",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 55
+        }
+      },
+      {
+        "comment": "",
+        "key": "Modes",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 56
+        }
+      },
+      {
+        "comment": "",
+        "key": "Presets",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 61
+        }
+      },
+      {
+        "comment": "",
+        "key": "Export",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 66
+        }
+      },
+      {
+        "comment": "",
+        "key": "Settings",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "Exit Fullscreen",
+        "location": {
+          "startingColumn": 60,
+          "startingLine": 78
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enter Fullscreen",
+        "location": {
+          "startingColumn": 80,
+          "startingLine": 78
+        }
+      }
+    ]
+  },
+  "version": 1
+}

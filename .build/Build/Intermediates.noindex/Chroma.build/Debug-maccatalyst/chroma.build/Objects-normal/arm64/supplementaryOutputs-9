@@ -1,0 +1,23 @@
+{
+  "/Users/seb/chroma/Packages/ChromaDomain/ParameterStore.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ParameterStore.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ParameterStore.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ParameterStore.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ParameterStore.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ParameterStore.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaDomain/PresetModels.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetModels.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetModels.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetModels.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetModels.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetModels.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaDomain/SessionModels.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionModels.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionModels.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionModels.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionModels.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionModels.swiftdeps"
+  }
+}

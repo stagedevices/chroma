@@ -3162,6 +3162,8 @@ struct SettingsDiagnosticsSheet: View {
                     modeDefaultsSection
                     sessionRecoverySection
                     audioInputSection
+                    midiSection
+                    playbackSection
                     outputSection
                     appearanceSection
                     aboutSection
@@ -3712,6 +3714,148 @@ struct SettingsDiagnosticsSheet: View {
             .padding(.vertical, 2)
         } header: {
             sectionHeader("Input")
+        }
+    }
+
+    // MARK: - MIDI Section
+
+    private var midiSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Status")
+                        .font(ChromaTypography.sheetRowTitle)
+                    Spacer(minLength: 10)
+                    if sessionViewModel.isMIDIActive {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                            Text("Active")
+                                .font(ChromaTypography.metric)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Inactive")
+                            .font(ChromaTypography.metric)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if sessionViewModel.midiConnectedDevices.isEmpty {
+                    Text("No MIDI devices connected. Connect a device via USB or Bluetooth.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                } else {
+                    let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                        ForEach(sessionViewModel.midiConnectedDevices) { device in
+                            ExportSettingTileButton(
+                                title: device.name,
+                                subtitle: device.manufacturer.isEmpty ? "MIDI" : device.manufacturer,
+                                isSelected: true,
+                                isEnabled: true,
+                                tintColor: exportSettingsTintColor,
+                                isLightAppearance: sessionViewModel.isLightGlassAppearance
+                            ) { }
+                        }
+                    }
+                }
+
+                if let tempo = sessionViewModel.midiTempoState, tempo.bpm > 0 {
+                    HStack {
+                        Text("Tempo")
+                            .font(ChromaTypography.sheetRowTitle)
+                        Spacer(minLength: 10)
+                        Text(String(format: "%.0f BPM", tempo.bpm))
+                            .font(ChromaTypography.metric)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    ExportSettingTileButton(
+                        title: sessionViewModel.isMIDIActive ? "Stop MIDI" : "Start MIDI",
+                        subtitle: sessionViewModel.isMIDIActive ? "Disconnect" : "Listen for devices",
+                        isSelected: sessionViewModel.isMIDIActive,
+                        isEnabled: true,
+                        tintColor: exportSettingsTintColor,
+                        isLightAppearance: sessionViewModel.isLightGlassAppearance
+                    ) {
+                        if sessionViewModel.isMIDIActive {
+                            sessionViewModel.stopMIDI()
+                        } else {
+                            sessionViewModel.startMIDI()
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("MIDI")
+        }
+    }
+
+    // MARK: - Playback Section
+
+    private var playbackSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                if let title = sessionViewModel.playbackNowPlayingTitle {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(title)
+                                .font(ChromaTypography.sheetRowTitle)
+                            if let artist = sessionViewModel.playbackNowPlayingArtist {
+                                Text(artist)
+                                    .font(ChromaTypography.bodySecondary)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 10)
+                        if sessionViewModel.isPlaybackActive {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        ExportSettingTileButton(
+                            title: sessionViewModel.isPlaybackActive ? "Pause" : "Resume",
+                            subtitle: nil,
+                            isSelected: sessionViewModel.isPlaybackActive,
+                            isEnabled: true,
+                            tintColor: exportSettingsTintColor,
+                            isLightAppearance: sessionViewModel.isLightGlassAppearance
+                        ) {
+                            if sessionViewModel.isPlaybackActive {
+                                sessionViewModel.pausePlayback()
+                            } else {
+                                sessionViewModel.resumePlayback()
+                            }
+                        }
+
+                        ExportSettingTileButton(
+                            title: "Stop",
+                            subtitle: nil,
+                            isSelected: false,
+                            isEnabled: true,
+                            tintColor: exportSettingsTintColor,
+                            isLightAppearance: sessionViewModel.isLightGlassAppearance
+                        ) {
+                            sessionViewModel.stopPlayback()
+                        }
+                    }
+                } else {
+                    Text("Select a song from your device library to drive visuals directly — no microphone needed.")
+                        .font(ChromaTypography.bodySecondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            sectionHeader("Playback")
         }
     }
 

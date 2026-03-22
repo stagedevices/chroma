@@ -1,0 +1,1144 @@
+{
+  "source": "/Users/seb/chroma/Packages/ChromaAppCore/SheetViews.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "MODES",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "Applies the selected mode and closes this sheet.",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 211
+        }
+      },
+      {
+        "comment": "",
+        "key": "CUSTOM",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 142
+        }
+      },
+      {
+        "comment": "",
+        "key": "UNLOCK %@",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 192
+        }
+      },
+      {
+        "comment": "",
+        "key": "SWITCH TO %@",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 193
+        }
+      },
+      {
+        "comment": "",
+        "key": "CUSTOM BUILDER",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 477
+        }
+      },
+      {
+        "comment": "",
+        "key": "Patch",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 498
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 516
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld NODES",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 612
+        }
+      },
+      {
+        "comment": "",
+        "key": "NODE LIBRARY",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 761
+        }
+      },
+      {
+        "comment": "",
+        "key": "INSPECTOR",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 824
+        }
+      },
+      {
+        "comment": "",
+        "key": "PARAMETERS",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 845
+        }
+      },
+      {
+        "comment": "",
+        "key": "IN: %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 865
+        }
+      },
+      {
+        "comment": "",
+        "key": "OUT: %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 870
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select a node to inspect.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 938
+        }
+      },
+      {
+        "comment": "",
+        "key": "GROUPS",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 946
+        }
+      },
+      {
+        "comment": "",
+        "key": "GROUP: %@",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 879
+        }
+      },
+      {
+        "comment": "",
+        "key": "Ungroup",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 886
+        }
+      },
+      {
+        "comment": "",
+        "key": "Group name",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 895
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Node",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 925
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 960
+        }
+      },
+      {
+        "comment": "",
+        "key": "No patch loaded.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 1079
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld in · %lld out",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1359
+        }
+      },
+      {
+        "comment": "",
+        "key": "Remove Connection",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 1506
+        }
+      },
+      {
+        "comment": "",
+        "key": "FEEDBACK",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1571
+        }
+      },
+      {
+        "comment": "",
+        "key": "Hold the phone parallel with a mirror, keep the front camera centered, and avoid major tilt before starting feedback.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 1583
+        }
+      },
+      {
+        "comment": "",
+        "key": "Mode",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 1587
+        }
+      },
+      {
+        "comment": "",
+        "key": "Camera",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 1588
+        }
+      },
+      {
+        "comment": "",
+        "key": "Feedback",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 1589
+        }
+      },
+      {
+        "comment": "",
+        "key": "START FEEDBACK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 1602
+        }
+      },
+      {
+        "comment": "",
+        "key": "STOP FEEDBACK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 1609
+        }
+      },
+      {
+        "comment": "",
+        "key": "Switch to Color Shift to enable mirror feedback.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1617
+        }
+      },
+      {
+        "comment": "",
+        "key": "VARIANT",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1774
+        }
+      },
+      {
+        "comment": "",
+        "key": "Choose the shape family used for attack-spawned tunnel cels.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1738
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename Preset",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 1954
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Preset?",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 1971
+        }
+      },
+      {
+        "comment": "",
+        "key": "Preset Name",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 1960
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 1961
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 1964
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 1978
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 1982
+        }
+      },
+      {
+        "comment": "",
+        "key": "'%@' will be removed.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1986
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2038
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2047
+        }
+      },
+      {
+        "comment": "",
+        "key": "No presets for %@ yet.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2067
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use the save action on the live controls tile to capture a new preset.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2070
+        }
+      },
+      {
+        "comment": "",
+        "key": "APPLY PRESET",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 2098
+        }
+      },
+      {
+        "comment": "",
+        "key": "New Set",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2248
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename Set",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2267
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Set?",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2284
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename Cue",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2302
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit Timing",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2320
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Cue?",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 2346
+        }
+      },
+      {
+        "comment": "",
+        "key": "Set Name",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2251
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2252
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2255
+        }
+      },
+      {
+        "comment": "",
+        "key": "Set Name",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2273
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2274
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2277
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2291
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2295
+        }
+      },
+      {
+        "comment": "",
+        "key": "'%@' and all its cues will be removed.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2299
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cue Name",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2308
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2309
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2312
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delay (seconds)",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2326
+        }
+      },
+      {
+        "comment": "",
+        "key": "Transition (seconds)",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2330
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2334
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2337
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2353
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 2358
+        }
+      },
+      {
+        "comment": "",
+        "key": "'%@' will be removed from this set.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2362
+        }
+      },
+      {
+        "comment": "",
+        "key": "No cue sets yet.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2378
+        }
+      },
+      {
+        "comment": "",
+        "key": "Create a set to build a sequence of preset recalls for live performance.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2381
+        }
+      },
+      {
+        "comment": "",
+        "key": "CREATE SET",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 2394
+        }
+      },
+      {
+        "comment": "",
+        "key": "No cues in this set.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2425
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add a cue to capture the current preset into this sequence.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 2428
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename Set",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 2466
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Set",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 2471
+        }
+      },
+      {
+        "comment": "",
+        "key": "New Set",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 2478
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 2551
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2591
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit Timing",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2598
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 2604
+        }
+      },
+      {
+        "comment": "",
+        "key": "ADD CUE FROM CURRENT PRESET",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 2638
+        }
+      },
+      {
+        "comment": "",
+        "key": "RECORDER",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 2715
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 2808
+        }
+      },
+      {
+        "comment": "",
+        "key": "Include Mic Audio",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 2798
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset to clean state?",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 3192
+        }
+      },
+      {
+        "comment": "",
+        "key": "SETTINGS / DIAGNOSTICS",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 3172
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset Session",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 3196
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 3201
+        }
+      },
+      {
+        "comment": "",
+        "key": "This clears current session state and live parameters. Presets and mode defaults are preserved.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 3203
+        }
+      },
+      {
+        "comment": "",
+        "key": "Thermal state is elevated. Safe FPS policy is temporarily forced.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 3290
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@: %@",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 3489
+        }
+      },
+      {
+        "comment": "",
+        "key": "Resolution",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3515
+        }
+      },
+      {
+        "comment": "",
+        "key": "Frame Rate",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3532
+        }
+      },
+      {
+        "comment": "",
+        "key": "Codec",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3549
+        }
+      },
+      {
+        "comment": "",
+        "key": "Unavailable on this device: %@.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 3572
+        }
+      },
+      {
+        "comment": "",
+        "key": "About Chroma",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 3614
+        }
+      },
+      {
+        "comment": "",
+        "key": "Website, privacy, support, and version info.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 3616
+        }
+      },
+      {
+        "comment": "",
+        "key": "No input sources are currently available.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 3675
+        }
+      },
+      {
+        "comment": "",
+        "key": "Authorization",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 3666
+        }
+      },
+      {
+        "comment": "",
+        "key": "Audio",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3790
+        }
+      },
+      {
+        "comment": "",
+        "key": "Meter RMS",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3791
+        }
+      },
+      {
+        "comment": "",
+        "key": "Meter Peak",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3792
+        }
+      },
+      {
+        "comment": "",
+        "key": "Feature Amplitude",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3793
+        }
+      },
+      {
+        "comment": "",
+        "key": "Transient",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3794
+        }
+      },
+      {
+        "comment": "",
+        "key": "Renderer",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3795
+        }
+      },
+      {
+        "comment": "",
+        "key": "Renderer Message",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3796
+        }
+      },
+      {
+        "comment": "",
+        "key": "Resolution",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3797
+        }
+      },
+      {
+        "comment": "",
+        "key": "Approx. FPS",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3798
+        }
+      },
+      {
+        "comment": "",
+        "key": "Average Frame",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3799
+        }
+      },
+      {
+        "comment": "",
+        "key": "Dropped Frames",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3800
+        }
+      },
+      {
+        "comment": "",
+        "key": "Active Mode",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 3801
+        }
+      },
+      {
+        "comment": "",
+        "key": "Show Diagnostics",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3805
+        }
+      },
+      {
+        "comment": "",
+        "key": "ABOUT",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 4029
+        }
+      },
+      {
+        "comment": "",
+        "key": "Designed for stage performance, projection output, and clean capture workflows.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 3937
+        }
+      },
+      {
+        "comment": "",
+        "key": "Chroma",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 3927
+        }
+      },
+      {
+        "comment": "",
+        "key": "Live audio-reactive visual instrument",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 3930
+        }
+      },
+      {
+        "comment": "",
+        "key": "Overview",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3953
+        }
+      },
+      {
+        "comment": "",
+        "key": "Actions",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 3979
+        }
+      },
+      {
+        "comment": "",
+        "key": "stagedevices.github.io/chroma",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 4013
+        }
+      },
+      {
+        "comment": "",
+        "key": "Details",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 4023
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 4094
+        }
+      },
+      {
+        "comment": "",
+        "key": "Spectral",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 4102
+        }
+      },
+      {
+        "comment": "",
+        "key": "Temporal",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 4103
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pitch",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 4104
+        }
+      },
+      {
+        "comment": "",
+        "key": "C %lld°",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 4191
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld° · %lld°",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 4195
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 4180
+        }
+      },
+      {
+        "comment": "",
+        "key": "Inside",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 4184
+        }
+      },
+      {
+        "comment": "",
+        "key": "Outside",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 4185
+        }
+      },
+      {
+        "comment": "",
+        "key": "TRIM",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 4352
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 4989
+        }
+      },
+      {
+        "comment": "",
+        "key": "Fullscreen capable",
+        "location": {
+          "startingColumn": 50,
+          "startingLine": 5029
+        }
+      },
+      {
+        "comment": "",
+        "key": "Windowed only",
+        "location": {
+          "startingColumn": 73,
+          "startingLine": 5029
+        }
+      },
+      {
+        "comment": "",
+        "key": "Light",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 5117
+        }
+      },
+      {
+        "comment": "",
+        "key": "Dark",
+        "location": {
+          "startingColumn": 52,
+          "startingLine": 5117
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tap to switch chrome and ambient theme",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 5109
+        }
+      },
+      {
+        "comment": "",
+        "key": "Light Glass",
+        "location": {
+          "startingColumn": 46,
+          "startingLine": 5107
+        }
+      },
+      {
+        "comment": "",
+        "key": "Dark Glass",
+        "location": {
+          "startingColumn": 62,
+          "startingLine": 5107
+        }
+      }
+    ]
+  },
+  "version": 1
+}

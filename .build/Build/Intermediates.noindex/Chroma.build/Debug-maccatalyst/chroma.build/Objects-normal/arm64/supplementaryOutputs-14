@@ -1,0 +1,23 @@
+{
+  "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps"
+  },
+  "/Users/seb/chroma/Apps/Chroma-iOS/ChromaIOSApp.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ChromaIOSApp.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ChromaIOSApp.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ChromaIOSApp.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ChromaIOSApp.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/ChromaIOSApp.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaSharedCore/RendererSurfaceStateMapper.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RendererSurfaceStateMapper.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RendererSurfaceStateMapper.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RendererSurfaceStateMapper.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RendererSurfaceStateMapper.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RendererSurfaceStateMapper.swiftdeps"
+  }
+}

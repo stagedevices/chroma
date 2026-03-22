@@ -1,0 +1,23 @@
+{
+  "/Users/seb/chroma/Packages/ChromaDomain/AudioSampleModels.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioSampleModels.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioSampleModels.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioSampleModels.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioSampleModels.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioSampleModels.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaDomain/CustomPatchModels.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CustomPatchModels.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CustomPatchModels.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CustomPatchModels.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CustomPatchModels.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CustomPatchModels.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaDomain/DiagnosticsModels.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/DiagnosticsModels.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/DiagnosticsModels.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/DiagnosticsModels.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/DiagnosticsModels.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/DiagnosticsModels.swiftdeps"
+  }
+}

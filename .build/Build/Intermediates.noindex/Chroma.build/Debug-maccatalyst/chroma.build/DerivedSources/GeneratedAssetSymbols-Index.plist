@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>colors</key>
+	<array>
+		<dict>
+			<key>catalogPath</key>
+			<string>/Users/seb/chroma/Apps/Chroma-iOS/Assets.xcassets</string>
+			<key>objcSymbol</key>
+			<string>ACColorNameLaunchBackground</string>
+			<key>relativePath</key>
+			<string>./LaunchBackground.colorset</string>
+			<key>swiftSymbol</key>
+			<string>launchBackground</string>
+		</dict>
+		<dict>
+			<key>catalogPath</key>
+			<string>/Users/seb/chroma/Apps/Chroma-iOS/Assets.xcassets</string>
+			<key>objcSymbol</key>
+			<string>ACColorNameLaunchPrimaryText</string>
+			<key>relativePath</key>
+			<string>./LaunchPrimaryText.colorset</string>
+			<key>swiftSymbol</key>
+			<string>launchPrimaryText</string>
+		</dict>
+		<dict>
+			<key>catalogPath</key>
+			<string>/Users/seb/chroma/Apps/Chroma-iOS/Assets.xcassets</string>
+			<key>objcSymbol</key>
+			<string>ACColorNameLaunchSecondaryText</string>
+			<key>relativePath</key>
+			<string>./LaunchSecondaryText.colorset</string>
+			<key>swiftSymbol</key>
+			<string>launchSecondaryText</string>
+		</dict>
+	</array>
+	<key>images</key>
+	<array>
+		<dict>
+			<key>catalogPath</key>
+			<string>/Users/seb/chroma/Apps/Chroma-iOS/Assets.xcassets</string>
+			<key>objcSymbol</key>
+			<string>ACImageNameLaunchAppIcon</string>
+			<key>relativePath</key>
+			<string>./LaunchAppIcon.imageset</string>
+			<key>swiftSymbol</key>
+			<string>launchAppIcon</string>
+		</dict>
+	</array>
+	<key>symbols</key>
+	<array/>
+</dict>
+</plist>

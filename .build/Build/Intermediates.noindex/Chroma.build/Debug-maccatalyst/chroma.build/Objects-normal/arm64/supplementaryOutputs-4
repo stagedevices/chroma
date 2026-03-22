@@ -1,0 +1,30 @@
+{
+  "/Users/seb/chroma/Packages/ChromaAppCore/SessionViewModel.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionViewModel.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionViewModel.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionViewModel.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionViewModel.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SessionViewModel.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaAppCore/SheetViews.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SheetViews.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SheetViews.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SheetViews.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SheetViews.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/SheetViews.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaAudio/AudioInputServices.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioInputServices.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioInputServices.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioInputServices.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioInputServices.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/AudioInputServices.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaAudio/CameraFeedbackServices.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CameraFeedbackServices.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CameraFeedbackServices.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CameraFeedbackServices.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CameraFeedbackServices.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/CameraFeedbackServices.swiftdeps"
+  }
+}

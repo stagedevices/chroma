@@ -1,0 +1,23 @@
+{
+  "/Users/seb/chroma/Packages/ChromaPresets/PresetServices.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetServices.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetServices.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetServices.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetServices.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/PresetServices.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaRecorder/LiveRecorderService.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/LiveRecorderService.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/LiveRecorderService.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/LiveRecorderService.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/LiveRecorderService.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/LiveRecorderService.swiftdeps"
+  },
+  "/Users/seb/chroma/Packages/ChromaRecorder/RecorderServices.swift" : {
+    "const-values" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RecorderServices.swiftconstvalues",
+    "dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RecorderServices.d",
+    "diagnostics" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RecorderServices.dia",
+    "object" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RecorderServices.o",
+    "swift-dependencies" : "/Users/seb/chroma/.build/Build/Intermediates.noindex/Chroma.build/Debug-maccatalyst/chroma.build/Objects-normal/arm64/RecorderServices.swiftdeps"
+  }
+}

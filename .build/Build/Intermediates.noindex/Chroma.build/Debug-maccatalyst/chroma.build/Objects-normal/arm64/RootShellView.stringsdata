@@ -1,0 +1,168 @@
+{
+  "source": "/Users/seb/chroma/Packages/ChromaAppCore/RootShellView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "CHROMA",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 219
+        }
+      },
+      {
+        "comment": "",
+        "key": "SHOW CONTROLS",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 693
+        }
+      },
+      {
+        "comment": "",
+        "key": "LIVE CONTROLS",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 806
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 882
+        }
+      },
+      {
+        "comment": "",
+        "key": "Spectral",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 891
+        }
+      },
+      {
+        "comment": "",
+        "key": "Temporal",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 892
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pitch",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 893
+        }
+      },
+      {
+        "comment": "",
+        "key": "C %lld°",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1009
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld° · %lld°",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 1014
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 995
+        }
+      },
+      {
+        "comment": "",
+        "key": "Inside",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1001
+        }
+      },
+      {
+        "comment": "",
+        "key": "Outside",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1002
+        }
+      },
+      {
+        "comment": "",
+        "key": "TRIM",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 1176
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 1569
+        }
+      },
+      {
+        "comment": "",
+        "key": "Spectral",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 1580
+        }
+      },
+      {
+        "comment": "",
+        "key": "Temporal",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 1581
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pitch",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 1582
+        }
+      },
+      {
+        "comment": "",
+        "key": "QUICK SAVE NEW PRESET",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 1687
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename from Presets",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1697
+        }
+      },
+      {
+        "comment": "",
+        "key": "Saved %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 1692
+        }
+      }
+    ]
+  },
+  "version": 1
+}

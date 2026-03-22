@@ -122,6 +122,23 @@ public struct ChromaAppBootstrap {
 #endif
             return DiskSetlistService()
         }()
+        let midiService: MIDIService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderMIDIService()
+            }
+#endif
+            return LiveMIDIService()
+        }()
+        let playbackService: PlaybackService = {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                return PlaceholderPlaybackService()
+            }
+#endif
+            return LivePlaybackService(engine: audioInputService.audioEngine)
+        }()
+        let cueExecutionEngine = CueExecutionEngine()
         let presets = presetService.loadPresets()
         let performanceSets = setlistService.loadSets()
         let recoveredSnapshot = sessionRecoveryService.loadSnapshot()
@@ -148,6 +165,9 @@ public struct ChromaAppBootstrap {
             diagnosticsService: diagnosticsService,
             externalDisplayCoordinator: externalDisplayCoordinator,
             setlistService: setlistService,
+            midiService: midiService,
+            playbackService: playbackService,
+            cueExecutionEngine: cueExecutionEngine,
             presets: presets,
             performanceSets: performanceSets
         )

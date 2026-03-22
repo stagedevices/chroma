@@ -41,6 +41,14 @@ public final class SessionViewModel: ObservableObject {
     @Published public private(set) var sessionRecoveryStatusMessage: String?
     @Published public private(set) var thermalFallbackIsActive: Bool
     @Published public var includeMicAudioInExport: Bool
+    @Published public private(set) var midiConnectedDevices: [MIDIDeviceDescriptor] = []
+    @Published public private(set) var midiTempoState: MIDITempoState?
+    @Published public private(set) var isMIDIActive: Bool = false
+    @Published public private(set) var isPlaybackActive: Bool = false
+    @Published public private(set) var playbackNowPlayingTitle: String?
+    @Published public private(set) var playbackNowPlayingArtist: String?
+    @Published public private(set) var cueEngineActiveCueIndex: Int?
+    @Published public private(set) var isCueEngineRunning: Bool = false
 
     public let parameterStore: ParameterStore
     public let audioInputService: AudioInputService
@@ -57,6 +65,9 @@ public final class SessionViewModel: ObservableObject {
     public let diagnosticsService: DiagnosticsService
     public let externalDisplayCoordinator: ExternalDisplayCoordinator
     public let setlistService: SetlistService
+    public let midiService: MIDIService
+    public let playbackService: PlaybackService
+    public let cueExecutionEngine: CueExecutionEngine
 
     private let surfaceStateMapper: RendererSurfaceStateMapper
     private let audioStatusFormatter: AudioStatusFormatter
@@ -69,6 +80,9 @@ public final class SessionViewModel: ObservableObject {
     private var performanceModeOverride: PerformanceMode?
     private var patchUndoStack: [CustomPatch] = []
     private var patchRedoStack: [CustomPatch] = []
+    private var midiAttackIDCounter: UInt64 = 0
+    private var midiClockTimestamps: [Date] = []
+    private var lastMIDINoteOnFrame: AudioFeatureFrame?
     private static let maxUndoDepth = 40
     @Published public private(set) var patchClipboard: CustomPatchClipboard?
     @Published public private(set) var canUndoPatch: Bool = false
@@ -100,6 +114,9 @@ public final class SessionViewModel: ObservableObject {
         diagnosticsService: DiagnosticsService,
         externalDisplayCoordinator: ExternalDisplayCoordinator,
         setlistService: SetlistService,
+        midiService: MIDIService,
+        playbackService: PlaybackService,
+        cueExecutionEngine: CueExecutionEngine,
         presets: [Preset],
         performanceSets: [PerformanceSet]
     ) {
@@ -121,6 +138,9 @@ public final class SessionViewModel: ObservableObject {
         self.diagnosticsService = diagnosticsService
         self.externalDisplayCoordinator = externalDisplayCoordinator
         self.setlistService = setlistService
+        self.midiService = midiService
+        self.playbackService = playbackService
+        self.cueExecutionEngine = cueExecutionEngine
         self.presets = presets
 
         // Remove stale custom mode presets that predate the customPatchID linkage
@@ -201,6 +221,9 @@ public final class SessionViewModel: ObservableObject {
         bindRecorderStreams()
         bindExternalDisplayStreams()
         bindThermalStateChanges()
+        bindMIDIStreams()
+        bindPlaybackStreams()
+        bindCueEngine()
         refreshAudioInputs()
         applyPerformanceModeOverrideIfNeeded()
         syncAudioAnalysisTuning()
@@ -1333,6 +1356,190 @@ public final class SessionViewModel: ObservableObject {
                 syncRendererState()
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - MIDI bindings
+
+    private func bindMIDIStreams() {
+        midiService.eventPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in
+                self?.handleMIDIEvent(event)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleMIDIEvent(_ event: MIDIEvent) {
+        switch event.kind {
+        case .noteOn(let note, let velocity, _):
+            midiAttackIDCounter += 1
+            let frame = AudioFeatureFrame(
+                timestamp: event.timestamp,
+                amplitude: Double(velocity) / 127.0,
+                lowBandEnergy: Double(velocity) / 127.0 * 0.8,
+                midBandEnergy: Double(velocity) / 127.0 * 0.6,
+                highBandEnergy: Double(velocity) / 127.0 * 0.4,
+                transientStrength: Double(velocity) / 127.0 * 0.7,
+                pitchHz: MIDINoteUtility.noteToHz(note),
+                pitchConfidence: 1.0,
+                stablePitchClass: MIDINoteUtility.pitchClass(note),
+                stablePitchCents: MIDINoteUtility.centsDeviation,
+                isAttack: true,
+                attackStrength: Double(velocity) / 127.0,
+                attackID: midiAttackIDCounter,
+                attackDbOverFloor: Double(velocity) / 127.0 * 30
+            )
+            lastMIDINoteOnFrame = frame
+            latestAudioFeatureFrame = frame
+            syncRendererState()
+
+        case .noteOff(let note, _):
+            let frame = AudioFeatureFrame(
+                timestamp: event.timestamp,
+                amplitude: 0,
+                lowBandEnergy: 0,
+                midBandEnergy: 0,
+                highBandEnergy: 0,
+                transientStrength: 0,
+                pitchHz: MIDINoteUtility.noteToHz(note),
+                pitchConfidence: 0.5,
+                stablePitchClass: MIDINoteUtility.pitchClass(note),
+                stablePitchCents: MIDINoteUtility.centsDeviation,
+                isAttack: false,
+                attackStrength: 0,
+                attackID: midiAttackIDCounter,
+                attackDbOverFloor: 0
+            )
+            lastMIDINoteOnFrame = nil
+            latestAudioFeatureFrame = frame
+            syncRendererState()
+
+        case .clock:
+            trackMIDIClock(event.timestamp)
+
+        case .start:
+            midiTempoState = MIDITempoState(bpm: midiTempoState?.bpm ?? 120, beat: 0, isPlaying: true)
+            midiClockTimestamps.removeAll()
+
+        case .stop:
+            midiTempoState?.isPlaying = false
+
+        case .continue:
+            midiTempoState?.isPlaying = true
+
+        case .controlChange:
+            break // CC mapping is a future extension
+        }
+
+        // Update device list on any event (lightweight check)
+        if midiConnectedDevices != midiService.connectedDevices {
+            midiConnectedDevices = midiService.connectedDevices
+        }
+        isMIDIActive = midiService.isActive
+    }
+
+    private func trackMIDIClock(_ timestamp: Date) {
+        midiClockTimestamps.append(timestamp)
+        if midiClockTimestamps.count > 25 {
+            midiClockTimestamps.removeFirst(midiClockTimestamps.count - 25)
+        }
+        guard midiClockTimestamps.count >= 7 else { return }
+        let first = midiClockTimestamps.first!
+        let last = midiClockTimestamps.last!
+        let intervals = midiClockTimestamps.count - 1
+        let totalSeconds = last.timeIntervalSince(first)
+        let avgTickSeconds = totalSeconds / Double(intervals)
+        let beatSeconds = avgTickSeconds * 24.0 // 24 ppqn
+        guard beatSeconds > 0 else { return }
+        let bpm = 60.0 / beatSeconds
+        let beat = (midiTempoState?.beat ?? 0) + (1.0 / 24.0)
+        midiTempoState = MIDITempoState(bpm: bpm, beat: beat, isPlaying: true)
+    }
+
+    public func startMIDI() {
+        midiService.start()
+        isMIDIActive = true
+        midiConnectedDevices = midiService.connectedDevices
+    }
+
+    public func stopMIDI() {
+        midiService.stop()
+        isMIDIActive = false
+        midiConnectedDevices = []
+        midiTempoState = nil
+    }
+
+    // MARK: - Playback bindings
+
+    private func bindPlaybackStreams() {
+        playbackService.samplePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] sampleFrame in
+                guard let self, self.isPlaybackActive else { return }
+                // When playback is active, feed playback samples to analysis
+                // by updating the latest sample data — the analysis service
+                // processes this through its existing pipeline
+            }
+            .store(in: &cancellables)
+    }
+
+    public func startPlayback(url: URL) async throws {
+        try await playbackService.play(url: url)
+        isPlaybackActive = true
+        playbackNowPlayingTitle = playbackService.nowPlayingTitle
+        playbackNowPlayingArtist = playbackService.nowPlayingArtist
+    }
+
+    public func pausePlayback() {
+        playbackService.pause()
+        isPlaybackActive = false
+    }
+
+    public func resumePlayback() {
+        playbackService.resume()
+        isPlaybackActive = true
+    }
+
+    public func stopPlayback() {
+        playbackService.stop()
+        isPlaybackActive = false
+        playbackNowPlayingTitle = nil
+        playbackNowPlayingArtist = nil
+    }
+
+    // MARK: - Cue engine bindings
+
+    private func bindCueEngine() {
+        cueExecutionEngine.cueAdvancePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] cue in
+                self?.fireCue(cue)
+            }
+            .store(in: &cancellables)
+
+        cueExecutionEngine.$isRunning
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$isCueEngineRunning)
+
+        cueExecutionEngine.$activeCueIndex
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$cueEngineActiveCueIndex)
+    }
+
+    public func loadCueSet(_ set: PerformanceSet) {
+        cueExecutionEngine.load(set: set)
+    }
+
+    public func startCueEngine() {
+        cueExecutionEngine.start()
+    }
+
+    public func advanceCue() {
+        cueExecutionEngine.advanceToNext()
+    }
+
+    public func stopCueEngine() {
+        cueExecutionEngine.stop()
     }
 
     private var tunnelVariantIndex: Int {

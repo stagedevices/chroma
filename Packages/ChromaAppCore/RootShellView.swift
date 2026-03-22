@@ -12,6 +12,7 @@ public struct RootShellView: View {
 #if canImport(UIKit) && !targetEnvironment(macCatalyst)
     @State private var externalProgramWindow: UIWindow?
 #endif
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var inkTransitionProgress: CGFloat = 0.001
     @State private var inkTransitionOpacity: Double = 0
     @State private var inkTransitionResetWorkItem: DispatchWorkItem?
@@ -61,6 +62,18 @@ public struct RootShellView: View {
                     opacity: inkTransitionOpacity
                 )
                 .allowsHitTesting(false)
+            }
+
+            if !hasCompletedOnboarding {
+                OnboardingOverlayView(
+                    isLightGlassAppearance: isLightGlassAppearance,
+                    onComplete: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            hasCompletedOnboarding = true
+                        }
+                    }
+                )
+                .transition(.opacity)
             }
         }
         .preferredColorScheme(isLightGlassAppearance ? .light : .dark)
@@ -133,11 +146,11 @@ public struct RootShellView: View {
     }
 
     private var showsChrome: Bool {
-        !appViewModel.isPerformanceModeEnabled || appViewModel.isChromeVisible
+        hasCompletedOnboarding && (!appViewModel.isPerformanceModeEnabled || appViewModel.isChromeVisible)
     }
 
     private var showsRevealControl: Bool {
-        appViewModel.isPerformanceModeEnabled && !appViewModel.isChromeVisible && appViewModel.isRevealControlVisible
+        hasCompletedOnboarding && appViewModel.isPerformanceModeEnabled && !appViewModel.isChromeVisible && appViewModel.isRevealControlVisible
     }
 
     private var isLightGlassAppearance: Bool {
@@ -235,8 +248,29 @@ public struct RootShellView: View {
                 .foregroundStyle(chromeSecondaryColor)
                 .lineLimit(2)
                 .frame(maxWidth: 420, alignment: .leading)
+
+            if let statusLine = externalInputStatusLine {
+                Text(statusLine.uppercased())
+                    .font(ChromaTypography.overline)
+                    .tracking(1.2)
+                    .foregroundStyle(chromeSecondaryColor)
+            }
         }
         .shadow(color: (isLightGlassAppearance ? Color.white : Color.black).opacity(0.24), radius: 18, x: 0, y: 6)
+    }
+
+    private var externalInputStatusLine: String? {
+        var parts: [String] = []
+        if sessionViewModel.isMIDIActive, let device = sessionViewModel.midiConnectedDevices.first {
+            parts.append("MIDI: \(device.name)")
+        }
+        if let tempo = sessionViewModel.midiTempoState, tempo.bpm > 0 {
+            parts.append(String(format: "%.0f BPM", tempo.bpm))
+        }
+        if let title = sessionViewModel.playbackNowPlayingTitle {
+            parts.append("♫ \(title)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
 
     private var actionCluster: some View {

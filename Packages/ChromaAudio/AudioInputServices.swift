@@ -16,6 +16,7 @@ public protocol AudioInputService: AnyObject {
     var samplePublisher: AnyPublisher<AudioSampleFrame, Never> { get }
     var availableInputSources: [AudioInputSourceDescriptor] { get }
     var selectedInputSourceID: String? { get }
+    var audioEngine: AVAudioEngine? { get }
     func startCapture() async throws
     func stopCapture()
     func refreshInputSources()
@@ -57,6 +58,7 @@ public final class PlaceholderAudioInputService: AudioInputService {
     }
     public private(set) var availableInputSources: [AudioInputSourceDescriptor]
     public private(set) var selectedInputSourceID: String?
+    public var audioEngine: AVAudioEngine? { nil }
 
     private let meterSubject: CurrentValueSubject<AudioMeterFrame, Never>
     private let sampleSubject: CurrentValueSubject<AudioSampleFrame, Never>
@@ -220,6 +222,7 @@ public final class LiveAudioInputService: AudioInputService {
     }
     public private(set) var availableInputSources: [AudioInputSourceDescriptor]
     public private(set) var selectedInputSourceID: String?
+    public var audioEngine: AVAudioEngine? { engine }
 
     private let engine: AVAudioEngine
     private let meterSubject: CurrentValueSubject<AudioMeterFrame, Never>

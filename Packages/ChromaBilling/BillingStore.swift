@@ -92,7 +92,8 @@ public final class BillingStore: ObservableObject {
     private let storeKitEnabled: Bool
     private let userDefaults: UserDefaults
     private let now: () -> Date
-    
+
+    private let initializationSemaphore = DispatchSemaphore(value: 1)
     private var didStart = false
     private var updatesTask: Task<Void, Never>?
     
@@ -141,17 +142,32 @@ public final class BillingStore: ObservableObject {
     }
     
     public func startIfNeeded() async {
-        guard !didStart else { return }
+        // Fast path: check if already started
+        if didStart { return }
+
+        // Use semaphore to ensure only one initialization task runs at a time
+        await withCheckedContinuation { continuation in
+            initializationSemaphore.wait()
+            continuation.resume()
+        }
+
+        // Double-check after acquiring semaphore to prevent race conditions
+        guard !didStart else {
+            return
+        }
         didStart = true
-        
+
         guard storeKitEnabled else {
             applyCachedState()
             return
         }
-        
-        await loadProducts()
-        await refreshEntitlements()
-        listenForTransactions()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.loadProducts()
+            await self.refreshEntitlements()
+            self.listenForTransactions()
+        }
     }
     
     public func refreshEntitlements() async {
